@@ -1,0 +1,764 @@
+// Prisma schema for Mobeng CRM.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum UserStatus {
+  ACTIVE
+  INVITED
+  SUSPENDED
+}
+
+enum CustomerType {
+  RETAIL
+  FLEET
+  INSURANCE
+}
+
+enum CustomerStatus {
+  ACTIVE
+  INACTIVE
+  AT_RISK
+  LOST
+}
+
+enum PreferredChannel {
+  PHONE
+  EMAIL
+  WHATSAPP
+  SMS
+}
+
+enum VehicleStatus {
+  ACTIVE
+  SOLD
+  INACTIVE
+}
+
+enum ServiceStatus {
+  OPEN
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum ServiceItemType {
+  LABOR
+  PART
+  PACKAGE
+  DISCOUNT
+}
+
+enum SurveyStatus {
+  DRAFT
+  SENT
+  COMPLETED
+  EXPIRED
+}
+
+enum SurveyQuestionType {
+  RATING
+  TEXT
+  BOOLEAN
+  NPS
+}
+
+enum ComplaintStatus {
+  OPEN
+  INVESTIGATING
+  WAITING_CUSTOMER
+  RESOLVED
+  CLOSED
+}
+
+enum ComplaintPriority {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum RecoveryStatus {
+  PLANNED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum ReminderType {
+  SERVICE_DUE
+  FOLLOW_UP
+  PAYMENT
+  DOCUMENT_RENEWAL
+  CALLBACK
+}
+
+enum ReminderStatus {
+  PENDING
+  COMPLETED
+  SNOOZED
+  CANCELLED
+}
+
+enum BookingStatus {
+  REQUESTED
+  CONFIRMED
+  ARRIVED
+  IN_SERVICE
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+}
+
+enum BookingSource {
+  WALK_IN
+  PHONE
+  WEBSITE
+  WHATSAPP
+  MOBILE_APP
+}
+
+enum JourneyEventType {
+  LEAD_CREATED
+  BOOKING_CREATED
+  SERVICE_COMPLETED
+  SURVEY_SENT
+  SURVEY_COMPLETED
+  COMPLAINT_OPENED
+  RECOVERY_COMPLETED
+  REMINDER_CREATED
+  NOTIFICATION_SENT
+}
+
+enum BlueprintStageCategory {
+  PRE_SERVICE
+  SERVICE
+  POST_SERVICE
+  RETENTION
+  RECOVERY
+}
+
+enum AutomationJobStatus {
+  ACTIVE
+  PAUSED
+  FAILED
+  COMPLETED
+}
+
+enum AutomationTrigger {
+  SCHEDULED
+  EVENT_BASED
+  MANUAL
+}
+
+enum NotificationChannel {
+  EMAIL
+  SMS
+  WHATSAPP
+  PUSH
+}
+
+enum NotificationStatus {
+  QUEUED
+  SENT
+  DELIVERED
+  FAILED
+  BOUNCED
+}
+
+enum TaskStatus {
+  TODO
+  IN_PROGRESS
+  DONE
+  CANCELLED
+}
+
+enum TaskPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum HealthScoreBand {
+  EXCELLENT
+  HEALTHY
+  WATCH
+  AT_RISK
+  LOST
+}
+
+model Role {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  users User[]
+}
+
+model User {
+  id        String     @id @default(cuid())
+  email     String     @unique
+  name      String
+  passwordHash String?
+  phone     String?
+  status    UserStatus @default(ACTIVE)
+  roleId    String
+  branchId  String?
+  lastLogin DateTime?
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  role                 Role                   @relation(fields: [roleId], references: [id])
+  branch               Branch?                @relation("BranchUsers", fields: [branchId], references: [id], onDelete: SetNull)
+  managedBranches      Branch[]               @relation("BranchManager")
+  assignedCustomers    Customer[]             @relation("CustomerAdvisor")
+  serviceTransactions  ServiceTransaction[]   @relation("ServiceAdvisor")
+  sentSurveys          FollowUpSurvey[]       @relation("SurveySender")
+  assignedComplaints   ComplaintTicket[]      @relation("ComplaintAssignee")
+  ownedRecoveryActions RecoveryAction[]       @relation("RecoveryOwner")
+  assignedReminders    Reminder[]             @relation("ReminderAssignee")
+  advisedBookings      Booking[]              @relation("BookingAdvisor")
+  journeyEvents        CustomerJourneyEvent[] @relation("JourneyEventCreator")
+  automationJobs       AutomationJob[]        @relation("AutomationOwner")
+  notifications        NotificationLog[]      @relation("NotificationUser")
+  assignedTasks        Task[]                 @relation("TaskAssignee")
+  createdTasks         Task[]                 @relation("TaskCreator")
+  uploadedFiles        FileUpload[]           @relation("FileUploader")
+
+  @@index([roleId])
+  @@index([branchId])
+}
+
+model Branch {
+  id         String   @id @default(cuid())
+  code       String   @unique
+  name       String
+  area       String?
+  phone      String?
+  email      String?
+  address    String
+  city       String
+  province   String?
+  postalCode String?
+  openingHour String?
+  closingHour String?
+  timezone   String   @default("Asia/Jakarta")
+  isActive   Boolean  @default(true)
+  managerId  String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  manager             User?                @relation("BranchManager", fields: [managerId], references: [id], onDelete: SetNull)
+  users               User[]               @relation("BranchUsers")
+  customers           Customer[]
+  vehicles            Vehicle[]
+  serviceTransactions ServiceTransaction[]
+  complaints          ComplaintTicket[]
+  reminders           Reminder[]
+  bookings            Booking[]
+
+  @@index([managerId])
+}
+
+model Customer {
+  id                String           @id @default(cuid())
+  customerNumber    String           @unique
+  branchId          String
+  assignedAdvisorId String?
+  firstName         String
+  lastName          String
+  email             String?
+  phone             String
+  alternatePhone    String?
+  dateOfBirth       DateTime?
+  type              CustomerType     @default(RETAIL)
+  status            CustomerStatus   @default(ACTIVE)
+  preferredChannel  PreferredChannel @default(WHATSAPP)
+  acquisitionSource String?
+  companyName       String?
+  taxId             String?
+  consentMarketing  Boolean          @default(false)
+  lastContactedAt   DateTime?
+  notes             String?          @db.Text
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+
+  branch              Branch                 @relation(fields: [branchId], references: [id])
+  assignedAdvisor     User?                  @relation("CustomerAdvisor", fields: [assignedAdvisorId], references: [id], onDelete: SetNull)
+  vehicles            Vehicle[]
+  serviceTransactions ServiceTransaction[]
+  surveys             FollowUpSurvey[]
+  complaints          ComplaintTicket[]
+  reminders           Reminder[]
+  bookings            Booking[]
+  journeyEvents       CustomerJourneyEvent[]
+  notificationLogs    NotificationLog[]
+  tasks               Task[]
+  healthScore         CustomerHealthScore?
+
+  @@index([branchId])
+  @@index([assignedAdvisorId])
+  @@index([phone])
+  @@index([status])
+}
+
+model Vehicle {
+  id                  String        @id @default(cuid())
+  customerId          String
+  branchId            String
+  vin                 String?       @unique
+  licensePlate        String        @unique
+  make                String
+  model               String
+  trim                String?
+  year                Int
+  color               String?
+  odometer            Int           @default(0)
+  fuelType            String?
+  transmission        String?
+  warrantyExpiresAt   DateTime?
+  lastServiceDate     DateTime?
+  nextServiceDueDate  DateTime?
+  nextServiceOdometer Int?
+  status              VehicleStatus @default(ACTIVE)
+  createdAt           DateTime      @default(now())
+  updatedAt           DateTime      @updatedAt
+
+  customer            Customer               @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  branch              Branch                 @relation(fields: [branchId], references: [id])
+  serviceTransactions ServiceTransaction[]
+  complaints          ComplaintTicket[]
+  reminders           Reminder[]
+  bookings            Booking[]
+  journeyEvents       CustomerJourneyEvent[]
+  tasks               Task[]
+
+  @@index([customerId])
+  @@index([branchId])
+  @@index([make, model])
+}
+
+model ServiceTransaction {
+  id               String        @id @default(cuid())
+  serviceNumber    String        @unique
+  customerId       String
+  vehicleId        String
+  branchId         String
+  advisorId        String?
+  technicianName   String?
+  openedAt         DateTime
+  closedAt         DateTime?
+  odometerIn       Int
+  status           ServiceStatus @default(OPEN)
+  totalLaborAmount Decimal       @default(0) @db.Decimal(12, 2)
+  totalPartsAmount Decimal       @default(0) @db.Decimal(12, 2)
+  discountAmount   Decimal       @default(0) @db.Decimal(12, 2)
+  taxAmount        Decimal       @default(0) @db.Decimal(12, 2)
+  totalAmount      Decimal       @default(0) @db.Decimal(12, 2)
+  paymentMethod    String?
+  invoiceUrl       String?
+  notes            String?       @db.Text
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+
+  customer      Customer               @relation(fields: [customerId], references: [id])
+  vehicle       Vehicle                @relation(fields: [vehicleId], references: [id])
+  branch        Branch                 @relation(fields: [branchId], references: [id])
+  advisor       User?                  @relation("ServiceAdvisor", fields: [advisorId], references: [id], onDelete: SetNull)
+  items         ServiceItem[]
+  surveys       FollowUpSurvey[]
+  complaints    ComplaintTicket[]
+  journeyEvents CustomerJourneyEvent[]
+
+  @@index([customerId])
+  @@index([vehicleId])
+  @@index([branchId])
+  @@index([advisorId])
+  @@index([status])
+  @@index([openedAt])
+}
+
+model ServiceItem {
+  id                   String          @id @default(cuid())
+  serviceTransactionId String
+  type                 ServiceItemType
+  name                 String
+  description          String?
+  sku                  String?
+  quantity             Int             @default(1)
+  unitPrice            Decimal         @default(0) @db.Decimal(12, 2)
+  lineTotal            Decimal         @default(0) @db.Decimal(12, 2)
+  laborHours           Decimal?        @db.Decimal(6, 2)
+  technicianName       String?
+  warrantyUntil        DateTime?
+  createdAt            DateTime        @default(now())
+  updatedAt            DateTime        @updatedAt
+
+  serviceTransaction ServiceTransaction @relation(fields: [serviceTransactionId], references: [id], onDelete: Cascade)
+
+  @@index([serviceTransactionId])
+  @@index([type])
+}
+
+model FollowUpSurvey {
+  id                   String              @id @default(cuid())
+  customerId           String
+  serviceTransactionId String?
+  sentById             String?
+  status               SurveyStatus        @default(DRAFT)
+  channel              NotificationChannel
+  sentAt               DateTime?
+  completedAt          DateTime?
+  score                Int?
+  npsScore             Int?
+  comments             String?             @db.Text
+  createdAt            DateTime            @default(now())
+  updatedAt            DateTime            @updatedAt
+
+  customer           Customer            @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  serviceTransaction ServiceTransaction? @relation(fields: [serviceTransactionId], references: [id], onDelete: SetNull)
+  sentBy             User?               @relation("SurveySender", fields: [sentById], references: [id], onDelete: SetNull)
+  responses          SurveyResponse[]
+
+  @@index([customerId])
+  @@index([serviceTransactionId])
+  @@index([sentById])
+  @@index([status])
+}
+
+model SurveyResponse {
+  id           String             @id @default(cuid())
+  surveyId     String
+  questionKey  String
+  questionText String
+  questionType SurveyQuestionType
+  ratingValue  Int?
+  textValue    String?            @db.Text
+  booleanValue Boolean?
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+
+  survey FollowUpSurvey @relation(fields: [surveyId], references: [id], onDelete: Cascade)
+
+  @@index([surveyId])
+}
+
+model ComplaintTicket {
+  id                   String            @id @default(cuid())
+  ticketNumber         String            @unique
+  customerId           String
+  vehicleId            String?
+  serviceTransactionId String?
+  branchId             String
+  assignedToId         String?
+  status               ComplaintStatus   @default(OPEN)
+  priority             ComplaintPriority @default(MEDIUM)
+  category             String
+  subject              String
+  description          String            @db.Text
+  openedAt             DateTime          @default(now())
+  resolvedAt           DateTime?
+  resolutionSummary    String?           @db.Text
+  createdAt            DateTime          @default(now())
+  updatedAt            DateTime          @updatedAt
+
+  customer           Customer            @relation(fields: [customerId], references: [id])
+  vehicle            Vehicle?            @relation(fields: [vehicleId], references: [id], onDelete: SetNull)
+  serviceTransaction ServiceTransaction? @relation(fields: [serviceTransactionId], references: [id], onDelete: SetNull)
+  branch             Branch              @relation(fields: [branchId], references: [id])
+  assignedTo         User?               @relation("ComplaintAssignee", fields: [assignedToId], references: [id], onDelete: SetNull)
+  recoveryActions    RecoveryAction[]
+  tasks              Task[]
+  attachments        FileUpload[]
+
+  @@index([customerId])
+  @@index([vehicleId])
+  @@index([serviceTransactionId])
+  @@index([branchId])
+  @@index([assignedToId])
+  @@index([status])
+  @@index([priority])
+}
+
+model RecoveryAction {
+  id                String         @id @default(cuid())
+  complaintTicketId String
+  ownerId           String?
+  actionType        String
+  status            RecoveryStatus @default(PLANNED)
+  description       String         @db.Text
+  promisedAt        DateTime?
+  completedAt       DateTime?
+  outcome           String?        @db.Text
+  followUpRequired  Boolean        @default(false)
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+
+  complaintTicket ComplaintTicket @relation(fields: [complaintTicketId], references: [id], onDelete: Cascade)
+  owner           User?           @relation("RecoveryOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+
+  @@index([complaintTicketId])
+  @@index([ownerId])
+  @@index([status])
+}
+
+model Reminder {
+  id             String         @id @default(cuid())
+  customerId     String
+  vehicleId      String?
+  branchId       String?
+  assignedToId   String?
+  type           ReminderType
+  status         ReminderStatus @default(PENDING)
+  title          String
+  notes          String?        @db.Text
+  dueAt          DateTime
+  completedAt    DateTime?
+  recurrenceRule String?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  vehicle    Vehicle? @relation(fields: [vehicleId], references: [id], onDelete: SetNull)
+  branch     Branch?  @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  assignedTo User?    @relation("ReminderAssignee", fields: [assignedToId], references: [id], onDelete: SetNull)
+
+  @@index([customerId])
+  @@index([vehicleId])
+  @@index([branchId])
+  @@index([assignedToId])
+  @@index([dueAt])
+  @@index([status])
+}
+
+model Booking {
+  id                 String        @id @default(cuid())
+  bookingNumber      String        @unique
+  customerId         String
+  vehicleId          String
+  branchId           String
+  advisorId          String?
+  status             BookingStatus @default(REQUESTED)
+  source             BookingSource @default(PHONE)
+  scheduledStart     DateTime
+  scheduledEnd       DateTime
+  requestedServices  String[]      @default([])
+  notes              String?       @db.Text
+  checkedInAt        DateTime?
+  cancellationReason String?
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
+
+  customer Customer @relation(fields: [customerId], references: [id])
+  vehicle  Vehicle  @relation(fields: [vehicleId], references: [id])
+  branch   Branch   @relation(fields: [branchId], references: [id])
+  advisor  User?    @relation("BookingAdvisor", fields: [advisorId], references: [id], onDelete: SetNull)
+
+  @@index([customerId])
+  @@index([vehicleId])
+  @@index([branchId])
+  @@index([advisorId])
+  @@index([status])
+  @@index([scheduledStart])
+}
+
+model CustomerJourneyEvent {
+  id                   String           @id @default(cuid())
+  customerId           String
+  vehicleId            String?
+  serviceTransactionId String?
+  eventType            JourneyEventType
+  eventAt              DateTime         @default(now())
+  title                String
+  description          String?          @db.Text
+  metadata             Json?
+  source               String?
+  createdById          String?
+  createdAt            DateTime         @default(now())
+  updatedAt            DateTime         @updatedAt
+
+  customer           Customer            @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  vehicle            Vehicle?            @relation(fields: [vehicleId], references: [id], onDelete: SetNull)
+  serviceTransaction ServiceTransaction? @relation(fields: [serviceTransactionId], references: [id], onDelete: SetNull)
+  createdBy          User?               @relation("JourneyEventCreator", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([customerId])
+  @@index([vehicleId])
+  @@index([serviceTransactionId])
+  @@index([createdById])
+  @@index([eventType])
+  @@index([eventAt])
+}
+
+model ServiceBlueprintStage {
+  id              String                 @id @default(cuid())
+  code            String                 @unique
+  name            String
+  description     String?                @db.Text
+  stageOrder      Int
+  category        BlueprintStageCategory
+  ownerRole       String?
+  defaultSlaHours Int?
+  isActive        Boolean                @default(true)
+  createdAt       DateTime               @default(now())
+  updatedAt       DateTime               @updatedAt
+
+  automationJobs AutomationJob[]
+
+  @@index([category])
+  @@index([stageOrder])
+}
+
+model AutomationJob {
+  id               String              @id @default(cuid())
+  name             String
+  jobType          String
+  status           AutomationJobStatus @default(ACTIVE)
+  trigger          AutomationTrigger
+  triggerConfig    Json?
+  blueprintStageId String?
+  ownerId          String?
+  lastRunAt        DateTime?
+  nextRunAt        DateTime?
+  retryCount       Int                 @default(0)
+  errorMessage     String?             @db.Text
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
+
+  blueprintStage   ServiceBlueprintStage? @relation(fields: [blueprintStageId], references: [id], onDelete: SetNull)
+  owner            User?                  @relation("AutomationOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+  notificationLogs NotificationLog[]
+
+  @@index([blueprintStageId])
+  @@index([ownerId])
+  @@index([status])
+  @@index([nextRunAt])
+}
+
+model NotificationLog {
+  id                String              @id @default(cuid())
+  automationJobId   String?
+  customerId        String?
+  userId            String?
+  channel           NotificationChannel
+  status            NotificationStatus  @default(QUEUED)
+  recipient         String
+  subject           String?
+  message           String              @db.Text
+  providerMessageId String?
+  sentAt            DateTime?
+  deliveredAt       DateTime?
+  failedAt          DateTime?
+  failureReason     String?             @db.Text
+  metadata          Json?
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+
+  automationJob AutomationJob? @relation(fields: [automationJobId], references: [id], onDelete: SetNull)
+  customer      Customer?      @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  user          User?          @relation("NotificationUser", fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([automationJobId])
+  @@index([customerId])
+  @@index([userId])
+  @@index([channel])
+  @@index([status])
+}
+
+model Task {
+  id                String       @id @default(cuid())
+  title             String
+  description       String?      @db.Text
+  status            TaskStatus   @default(TODO)
+  priority          TaskPriority @default(MEDIUM)
+  dueAt             DateTime?
+  completedAt       DateTime?
+  customerId        String?
+  vehicleId         String?
+  complaintTicketId String?
+  assignedToId      String?
+  createdById       String?
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+
+  customer        Customer?        @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  vehicle         Vehicle?         @relation(fields: [vehicleId], references: [id], onDelete: SetNull)
+  complaintTicket ComplaintTicket? @relation(fields: [complaintTicketId], references: [id], onDelete: SetNull)
+  assignedTo      User?            @relation("TaskAssignee", fields: [assignedToId], references: [id], onDelete: SetNull)
+  createdBy       User?            @relation("TaskCreator", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([customerId])
+  @@index([vehicleId])
+  @@index([complaintTicketId])
+  @@index([assignedToId])
+  @@index([createdById])
+  @@index([status])
+  @@index([dueAt])
+}
+
+model CustomerHealthScore {
+  id               String          @id @default(cuid())
+  customerId       String          @unique
+  score            Int
+  band             HealthScoreBand
+  lifetimeValue    Decimal         @default(0) @db.Decimal(12, 2)
+  totalVisits      Int             @default(0)
+  missedBookings   Int             @default(0)
+  openComplaints   Int             @default(0)
+  churnRiskPercent Decimal         @default(0) @db.Decimal(5, 2)
+  nextBestAction   String?
+  lastCalculatedAt DateTime        @default(now())
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([band])
+  @@index([score])
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  action     String
+  entityType String
+  entityId   String?
+  userId     String?
+  metadata   Json?
+  createdAt  DateTime @default(now())
+
+  @@index([entityType])
+  @@index([entityId])
+  @@index([userId])
+  @@index([createdAt])
+}
+
+model FileUpload {
+  id               String    @id @default(cuid())
+  complaintTicketId String?
+  uploadedById     String?
+  storageProvider  String
+  storageKey       String
+  fileName         String
+  mimeType         String
+  sizeBytes        Int
+  checksum         String?
+  url              String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  complaintTicket ComplaintTicket? @relation(fields: [complaintTicketId], references: [id], onDelete: SetNull)
+  uploadedBy      User?            @relation("FileUploader", fields: [uploadedById], references: [id], onDelete: SetNull)
+
+  @@index([complaintTicketId])
+  @@index([uploadedById])
+  @@index([storageProvider])
+}

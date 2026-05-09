@@ -1,0 +1,1158 @@
+import { prisma } from "@/lib/prisma";
+import { requireSessionUser } from "@/lib/auth";
+import { brandIdentity } from "@/lib/brand";
+import type { AppRole } from "@/lib/rbac";
+import {
+  BookingStatus,
+  ComplaintStatus,
+  HealthScoreBand,
+  RecoveryStatus,
+  ReminderStatus,
+  ServiceStatus,
+  SurveyStatus,
+  VehicleStatus,
+} from "@/generated/prisma/enums";
+
+function todayRange(now = new Date()) {
+  const start = new Date(now);
+  start.setHours(0, 0, 0, 0);
+  const end = new Date(now);
+  end.setHours(23, 59, 59, 999);
+  return { start, end };
+}
+
+function monthBucket(date: Date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function monthLabel(date: Date) {
+  return new Intl.DateTimeFormat("id-ID", {
+    month: "short",
+    year: "2-digit",
+  }).format(date);
+}
+
+function sortMonthSeries<T extends { monthKey: string }>(
+  data: T[],
+  limit = 6
+) {
+  return [...data]
+    .sort((left, right) => left.monthKey.localeCompare(right.monthKey))
+    .slice(-limit);
+}
+
+const openComplaintStatuses = [
+  ComplaintStatus.OPEN,
+  ComplaintStatus.INVESTIGATING,
+  ComplaintStatus.WAITING_CUSTOMER,
+];
+
+type DateFilter = {
+  from?: Date;
+  to?: Date;
+};
+
+type BranchScope = {
+  allowedBranchIds: string[];
+  effectiveBranchId?: string;
+  role: AppRole;
+};
+
+function maskPhone(phone: string) {
+  if (phone.length <= 4) return "****";
+  return `${phone.slice(0, 4)}****${phone.slice(-2)}`;
+}
+
+function maskEmail(email: string) {
+  const [local, domain] = email.split("@");
+  if (!domain) return "***";
+  const visible = local.slice(0, 2);
+  return `${visible}***@${domain}`;
+}
+
+function shouldMaskSensitiveContacts(role: AppRole) {
+  return role === "Technician" || role === "Marketing CRM";
+}
+
+function toDayEnd(input: Date) {
+  const value = new Date(input);
+  value.setHours(23, 59, 59, 999);
+  return value;
+}
+
+async function resolveBranchScope(requestedBranchId?: string): Promise<BranchScope> {
+  const user = await requireSessionUser();
+  const allBranchRoles: AppRole[] = ["Admin", "Owner"];
+
+  if (!allBranchRoles.includes(user.role)) {
+    return {
+      allowedBranchIds: user.branchId ? [user.branchId] : [],
+      effectiveBranchId: user.branchId ?? undefined,
+      role: user.role,
+    };
+  }
+
+  const branches = await prisma.branch.findMany({
+    where: { isActive: true },
+    select: { id: true },
+  });
+  const ids = branches.map((branch) => branch.id);
+
+  if (requestedBranchId && ids.includes(requestedBranchId)) {
+    return { allowedBranchIds: ids, effectiveBranchId: requestedBranchId, role: user.role };
+  }
+
+  return { allowedBranchIds: ids, role: user.role };
+}
+
+function buildDateFilter(whereDateField: string, dateFilter?: DateFilter) {
+  if (!dateFilter?.from && !dateFilter?.to) return {};
+  return {
+    [whereDateField]: {
+      ...(dateFilter.from ? { gte: dateFilter.from } : {}),
+      ...(dateFilter.to ? { lte: toDayEnd(dateFilter.to) } : {}),
+    },
+  };
+}
+
+export async function getShellData() {
+  const currentUser = await requireSessionUser();
+  const scope = await resolveBranchScope();
+  const [branch, openComplaints, pendingReminders, activeBookings, branches] =
+    await Promise.all([
+      prisma.branch.findFirst({ where: currentUser.branchId ? { id: currentUser.branchId } : undefined }),
+      prisma.complaintTicket.count({
+        where: {
+          status: { in: openComplaintStatuses },
+          ...(scope.effectiveBranchId
+            ? { branchId: scope.effectiveBranchId }
+            : { branchId: { in: scope.allowedBranchIds } }),
+        },
+      }),
+      prisma.reminder.count({
+        where: {
+          status: ReminderStatus.PENDING,
+          ...(scope.effectiveBranchId
+            ? { branchId: scope.effectiveBranchId }
+            : { branchId: { in: scope.allowedBranchIds } }),
+        },
+      }),
+      prisma.booking.count({
+        where: {
+          ...(scope.effectiveBranchId
+            ? { branchId: scope.effectiveBranchId }
+            : { branchId: { in: scope.allowedBranchIds } }),
+          status: {
+            in: [
+              BookingStatus.REQUESTED,
+              BookingStatus.CONFIRMED,
+              BookingStatus.ARRIVED,
+              BookingStatus.IN_SERVICE,
+            ],
+          },
+        },
+      }),
+      prisma.branch.findMany({
+        where: { id: { in: scope.allowedBranchIds } },
+        orderBy: { name: "asc" },
+        select: { id: true, name: true },
+      }),
+    ]);
+
+  return {
+    branchName: branch?.name ?? "Outlet Mobeng belum diatur",
+    branchCode: branch?.code ?? "N/A",
+    branchCity: branch?.city ?? "Indonesia",
+    openComplaints,
+    pendingReminders,
+    activeBookings,
+    currentUser: {
+      id: currentUser.id,
+      name: currentUser.name,
+      role: currentUser.role,
+    },
+    branches,
+  };
+}
+
+export async function getDashboardData(filters?: {
+  branchId?: string;
+  from?: Date;
+  to?: Date;
+}) {
+  const now = new Date();
+  const { start, end } = todayRange(now);
+  const scope = await resolveBranchScope(filters?.branchId);
+  const branchWhere = scope.effectiveBranchId
+    ? { branchId: scope.effectiveBranchId }
+    : { branchId: { in: scope.allowedBranchIds } };
+  const transactionDateWhere = buildDateFilter("openedAt", {
+    from: filters?.from,
+    to: filters?.to,
+  });
+  const bookingDateWhere = buildDateFilter("scheduledStart", {
+    from: filters?.from,
+    to: filters?.to,
+  });
+  const reminderDateWhere = buildDateFilter("dueAt", {
+    from: filters?.from,
+    to: filters?.to,
+  });
+
+  const [
+    customers,
+    completedTransactions,
+    allTransactions,
+    openComplaints,
+    todayBookingsList,
+    reminders,
+    satisfaction,
+    churnRiskCustomers,
+    churnRiskCount,
+    overdueServices,
+    complaintSlaAlerts,
+    surveys,
+    recoveredComplaints,
+    branchRevenue,
+    branchCustomers,
+    branchBookingsToday,
+    branchOpenComplaints,
+    advisorPerformance,
+    technicianPerformance,
+    reminderConversionByBranch,
+  ] = await Promise.all([
+    prisma.customer.findMany({
+      where: branchWhere,
+      select: {
+        id: true,
+        firstName: true,
+        lastName: true,
+      },
+    }),
+    prisma.serviceTransaction.findMany({
+      where: { status: ServiceStatus.COMPLETED, ...branchWhere, ...transactionDateWhere },
+      orderBy: { openedAt: "asc" },
+      select: {
+        id: true,
+        openedAt: true,
+        totalAmount: true,
+        customerId: true,
+        serviceNumber: true,
+        customer: { select: { firstName: true, lastName: true } },
+        vehicle: { select: { make: true, model: true, licensePlate: true } },
+      },
+    }),
+    prisma.serviceTransaction.findMany({
+      where: { ...branchWhere, ...transactionDateWhere },
+      orderBy: { openedAt: "desc" },
+      take: 6,
+      include: { customer: true, vehicle: true },
+    }),
+    prisma.complaintTicket.findMany({
+      where: { status: { in: openComplaintStatuses }, ...branchWhere },
+      orderBy: [{ priority: "desc" }, { openedAt: "asc" }],
+      include: {
+        customer: true,
+        vehicle: true,
+        assignedTo: true,
+        recoveryActions: {
+          orderBy: { promisedAt: "asc" },
+          take: 1,
+        },
+      },
+    }),
+    prisma.booking.findMany({
+      where: {
+        ...branchWhere,
+        ...bookingDateWhere,
+        scheduledStart: { gte: start, lte: end },
+        status: {
+          in: [
+            BookingStatus.REQUESTED,
+            BookingStatus.CONFIRMED,
+            BookingStatus.ARRIVED,
+            BookingStatus.IN_SERVICE,
+          ],
+        },
+      },
+      orderBy: { scheduledStart: "asc" },
+      include: {
+        customer: true,
+        vehicle: true,
+        advisor: true,
+      },
+    }),
+    prisma.reminder.findMany({
+      where: { ...branchWhere, ...reminderDateWhere },
+      orderBy: { dueAt: "asc" },
+      include: {
+        customer: true,
+        vehicle: true,
+        assignedTo: true,
+      },
+    }),
+    prisma.followUpSurvey.aggregate({
+      where: { status: SurveyStatus.COMPLETED, score: { not: null }, customer: branchWhere },
+      _avg: { score: true },
+    }),
+    prisma.customerHealthScore.findMany({
+      where: {
+        customer: branchWhere,
+        band: {
+          in: [HealthScoreBand.WATCH, HealthScoreBand.AT_RISK, HealthScoreBand.LOST],
+        },
+      },
+      orderBy: [{ score: "asc" }, { churnRiskPercent: "desc" }],
+      take: 5,
+      include: {
+        customer: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            phone: true,
+          },
+        },
+      },
+    }),
+    prisma.customerHealthScore.count({
+      where: {
+        customer: branchWhere,
+        band: {
+          in: [HealthScoreBand.WATCH, HealthScoreBand.AT_RISK, HealthScoreBand.LOST],
+        },
+      },
+    }),
+    prisma.vehicle.findMany({
+      where: {
+        ...branchWhere,
+        nextServiceDueDate: { lt: now },
+        status: VehicleStatus.ACTIVE,
+      },
+      orderBy: { nextServiceDueDate: "asc" },
+      take: 5,
+      include: {
+        customer: true,
+      },
+    }),
+    prisma.recoveryAction.findMany({
+      where: {
+        complaintTicket: branchWhere,
+        promisedAt: { not: null, lt: now },
+        status: { in: [RecoveryStatus.PLANNED, RecoveryStatus.IN_PROGRESS] },
+      },
+      orderBy: { promisedAt: "asc" },
+      take: 5,
+      include: {
+        complaintTicket: {
+          include: {
+            customer: true,
+            vehicle: true,
+          },
+        },
+        owner: true,
+      },
+    }),
+    prisma.followUpSurvey.findMany({
+      where: { customer: branchWhere },
+      select: {
+        id: true,
+        status: true,
+      },
+    }),
+    prisma.complaintTicket.count({
+      where: { status: { in: [ComplaintStatus.RESOLVED, ComplaintStatus.CLOSED] }, ...branchWhere },
+    }),
+    prisma.serviceTransaction.groupBy({
+      by: ["branchId"],
+      where: { status: ServiceStatus.COMPLETED, ...transactionDateWhere, ...branchWhere },
+      _sum: { totalAmount: true },
+      _count: { id: true },
+    }),
+    prisma.customer.groupBy({
+      by: ["branchId"],
+      where: branchWhere,
+      _count: { id: true },
+    }),
+    prisma.booking.groupBy({
+      by: ["branchId"],
+      where: { ...branchWhere, scheduledStart: { gte: start, lte: end } },
+      _count: { id: true },
+    }),
+    prisma.complaintTicket.groupBy({
+      by: ["branchId"],
+      where: { ...branchWhere, status: { in: openComplaintStatuses } },
+      _count: { id: true },
+    }),
+    prisma.serviceTransaction.groupBy({
+      by: ["advisorId"],
+      where: { ...branchWhere, status: ServiceStatus.COMPLETED, ...transactionDateWhere, advisorId: { not: null } },
+      _count: { id: true },
+      _sum: { totalAmount: true },
+    }),
+    prisma.serviceTransaction.groupBy({
+      by: ["technicianName"],
+      where: { ...branchWhere, status: ServiceStatus.COMPLETED, ...transactionDateWhere, technicianName: { not: null } },
+      _count: { id: true },
+      _sum: { totalAmount: true },
+    }),
+    prisma.reminder.groupBy({
+      by: ["branchId", "status"],
+      where: { ...branchWhere, branchId: { not: null } },
+      _count: { id: true },
+    }),
+  ]);
+
+  const completedCountByCustomer = completedTransactions.reduce<Record<string, number>>(
+    (acc, transaction) => {
+      acc[transaction.customerId] = (acc[transaction.customerId] ?? 0) + 1;
+      return acc;
+    },
+    {}
+  );
+
+  const repeatCustomers = Object.values(completedCountByCustomer).filter(
+    (count) => count >= 2
+  ).length;
+  const upcomingReminders = reminders.filter(
+    (reminder) => reminder.status === ReminderStatus.PENDING && reminder.dueAt >= now
+  );
+
+  const repeatServiceTrendMap = completedTransactions.reduce<
+    Record<string, { monthKey: string; month: string; repeatVisits: number }>
+  >((acc, transaction) => {
+    if ((completedCountByCustomer[transaction.customerId] ?? 0) < 2) {
+      return acc;
+    }
+
+    const key = monthBucket(transaction.openedAt);
+    acc[key] ??= {
+      monthKey: key,
+      month: monthLabel(transaction.openedAt),
+      repeatVisits: 0,
+    };
+    acc[key].repeatVisits += 1;
+    return acc;
+  }, {});
+
+  const retentionFunnel = [
+    {
+      label: "Servis selesai",
+      value: completedTransactions.length,
+      detail: "Transaksi completed yang siap masuk alur retention Mobeng",
+    },
+    {
+      label: "Survey terkirim",
+      value: surveys.filter(
+        (survey) =>
+          survey.status === SurveyStatus.SENT ||
+          survey.status === SurveyStatus.COMPLETED
+      ).length,
+      detail: "Undangan follow-up pasca servis yang sudah dikirim",
+    },
+    {
+      label: "Survey selesai",
+      value: surveys.filter((survey) => survey.status === SurveyStatus.COMPLETED).length,
+      detail: "Masukan pelanggan yang sudah terekam di CRM",
+    },
+    {
+      label: "Komplain terbuka",
+      value: openComplaints.length,
+      detail: "Kasus yang masih butuh perhatian tim recovery",
+    },
+    {
+      label: "Recovery selesai",
+      value: recoveredComplaints,
+      detail: "Kasus yang sudah ditutup dengan hasil recovery",
+    },
+  ];
+
+  const branches = await prisma.branch.findMany({
+    where: { id: { in: scope.allowedBranchIds } },
+    select: { id: true, name: true, city: true },
+  });
+  const branchNameMap = new Map(branches.map((branch) => [branch.id, branch]));
+  const branchRanking = branchRevenue
+    .map((entry) => ({
+      branchId: entry.branchId,
+      branchName: branchNameMap.get(entry.branchId)?.name ?? "Unknown",
+      revenue: Number(entry._sum.totalAmount ?? 0),
+      transactions: entry._count.id,
+      customers: branchCustomers.find((item) => item.branchId === entry.branchId)?._count.id ?? 0,
+      bookingsToday: branchBookingsToday.find((item) => item.branchId === entry.branchId)?._count.id ?? 0,
+      openComplaints: branchOpenComplaints.find((item) => item.branchId === entry.branchId)?._count.id ?? 0,
+    }))
+    .sort((a, b) => b.revenue - a.revenue);
+
+  const reminderConversionMap = reminderConversionByBranch.reduce<Record<string, { completed: number; total: number }>>(
+    (acc, item) => {
+      const key = item.branchId ?? "unknown";
+      acc[key] ??= { completed: 0, total: 0 };
+      acc[key].total += item._count.id;
+      if (item.status === ReminderStatus.COMPLETED) acc[key].completed += item._count.id;
+      return acc;
+    },
+    {}
+  );
+
+  return {
+    metrics: {
+      activeCustomers: customers.length,
+      repeatCustomers,
+      openComplaints: openComplaints.length,
+      todayBookings: todayBookingsList.length,
+      upcomingReminders: upcomingReminders.length,
+      customerSatisfaction: Math.round(((satisfaction._avg.score ?? 0) / 5) * 100),
+      churnRiskCount,
+      revenue: completedTransactions.reduce(
+        (sum, transaction) => sum + Number(transaction.totalAmount),
+        0
+      ),
+      overdueServices: overdueServices.length,
+      slaBreaches: complaintSlaAlerts.length,
+    },
+    branchRanking,
+    branchComparison: branchRanking,
+    performance: {
+      serviceAdvisors: advisorPerformance
+        .map((entry) => ({
+          advisorId: entry.advisorId ?? "unknown",
+          completedTransactions: entry._count.id,
+          revenue: Number(entry._sum.totalAmount ?? 0),
+        }))
+        .sort((a, b) => b.revenue - a.revenue),
+      technicians: technicianPerformance
+        .map((entry) => ({
+          technicianName: entry.technicianName ?? "Unknown",
+          completedTransactions: entry._count.id,
+          revenue: Number(entry._sum.totalAmount ?? 0),
+        }))
+        .sort((a, b) => b.completedTransactions - a.completedTransactions),
+      reminderConversionByBranch: Object.entries(reminderConversionMap).map(([branchId, value]) => ({
+        branchId,
+        branchName: branchNameMap.get(branchId)?.name ?? "Unknown",
+        conversionRate: value.total > 0 ? Math.round((value.completed / value.total) * 100) : 0,
+      })),
+      complaintRecoverySla: {
+        breaches: complaintSlaAlerts.length,
+        totalOpen: openComplaints.length,
+      },
+    },
+    filterContext: {
+      branches,
+      selectedBranchId: scope.effectiveBranchId,
+      dateFrom: filters?.from,
+      dateTo: filters?.to,
+    },
+    retentionFunnel,
+    recentTransactions: allTransactions,
+    overdueServices,
+    complaintSlaAlerts,
+    todayBookingsList,
+    topChurnRiskCustomers: churnRiskCustomers,
+    repeatServiceTrend: sortMonthSeries(Object.values(repeatServiceTrendMap)),
+    priorityWork: openComplaints.slice(0, 5).map((complaint) => ({
+      id: complaint.id,
+      type: "Complaint",
+      customer: `${complaint.customer.firstName} ${complaint.customer.lastName}`,
+      title: complaint.subject,
+      status: complaint.status,
+      owner: complaint.assignedTo?.name ?? "Unassigned",
+    })),
+  };
+}
+
+export async function getCustomersData() {
+  const user = await requireSessionUser();
+  const rows = await prisma.customer.findMany({
+    where: user.role === "Owner" || user.role === "Admin" ? undefined : user.branchId ? { branchId: user.branchId } : undefined,
+    orderBy: [{ firstName: "asc" }, { lastName: "asc" }],
+    include: {
+      assignedAdvisor: true,
+      healthScore: true,
+      _count: {
+        select: {
+          vehicles: true,
+          serviceTransactions: true,
+          complaints: true,
+          bookings: true,
+        },
+      },
+    },
+  });
+  if (!shouldMaskSensitiveContacts(user.role)) return rows;
+  return rows.map((row) => ({
+    ...row,
+    phone: maskPhone(row.phone),
+    email: row.email ? maskEmail(row.email) : null,
+  }));
+}
+
+export async function getCustomerProfileData(id: string) {
+  const scope = await resolveBranchScope();
+  const user = await requireSessionUser();
+  const customer = await prisma.customer.findFirst({
+    where: scope.effectiveBranchId ? { id, branchId: scope.effectiveBranchId } : { id, branchId: { in: scope.allowedBranchIds } },
+    include: {
+      branch: true,
+      assignedAdvisor: true,
+      healthScore: true,
+      vehicles: {
+        orderBy: [{ updatedAt: "desc" }],
+      },
+      serviceTransactions: {
+        orderBy: { openedAt: "desc" },
+        include: {
+          vehicle: true,
+          advisor: true,
+          complaints: true,
+        },
+      },
+      reminders: {
+        orderBy: { dueAt: "desc" },
+        include: {
+          vehicle: true,
+          assignedTo: true,
+        },
+      },
+      complaints: {
+        orderBy: { openedAt: "desc" },
+        include: {
+          vehicle: true,
+          assignedTo: true,
+          recoveryActions: {
+            orderBy: { promisedAt: "asc" },
+          },
+        },
+      },
+      bookings: {
+        orderBy: { scheduledStart: "desc" },
+        include: {
+          vehicle: true,
+          advisor: true,
+        },
+      },
+      journeyEvents: {
+        orderBy: { eventAt: "desc" },
+        include: {
+          vehicle: true,
+          serviceTransaction: true,
+          createdBy: true,
+        },
+      },
+      surveys: {
+        orderBy: { createdAt: "desc" },
+        include: {
+          serviceTransaction: {
+            include: { vehicle: true },
+          },
+        },
+      },
+    },
+  });
+  if (!customer) return customer;
+  if (!shouldMaskSensitiveContacts(user.role)) return customer;
+  return {
+    ...customer,
+    phone: maskPhone(customer.phone),
+    email: customer.email ? maskEmail(customer.email) : null,
+  };
+}
+
+export async function getVehiclesData() {
+  const user = await requireSessionUser();
+  return prisma.vehicle.findMany({
+    where: user.role === "Owner" || user.role === "Admin" ? undefined : user.branchId ? { branchId: user.branchId } : undefined,
+    orderBy: { updatedAt: "desc" },
+    include: { customer: true },
+  });
+}
+
+export async function getTransactionsData() {
+  const user = await requireSessionUser();
+  return prisma.serviceTransaction.findMany({
+    where:
+      user.role === "Technician"
+        ? { technicianName: user.name }
+        : user.role === "Owner" || user.role === "Admin"
+          ? undefined
+          : user.branchId
+            ? { branchId: user.branchId }
+            : undefined,
+    orderBy: { openedAt: "desc" },
+    include: { customer: true, vehicle: true, advisor: true },
+  });
+}
+
+export async function getFollowUpsData() {
+  const scope = await resolveBranchScope();
+  return prisma.followUpSurvey.findMany({
+    where: scope.effectiveBranchId ? { customer: { branchId: scope.effectiveBranchId } } : { customer: { branchId: { in: scope.allowedBranchIds } } },
+    orderBy: { createdAt: "desc" },
+    include: {
+      customer: true,
+      serviceTransaction: { include: { vehicle: true } },
+      sentBy: true,
+      responses: true,
+    },
+  });
+}
+
+export async function getFollowUpSurveyDetail(id: string) {
+  const scope = await resolveBranchScope();
+  return prisma.followUpSurvey.findFirst({
+    where: scope.effectiveBranchId ? { id, customer: { branchId: scope.effectiveBranchId } } : { id, customer: { branchId: { in: scope.allowedBranchIds } } },
+    include: {
+      customer: true,
+      serviceTransaction: { include: { vehicle: true } },
+      sentBy: true,
+      responses: true,
+    },
+  });
+}
+
+export async function getComplaintsData() {
+  const scope = await resolveBranchScope();
+  const user = await requireSessionUser();
+  const rows = await prisma.complaintTicket.findMany({
+    where: scope.effectiveBranchId ? { branchId: scope.effectiveBranchId } : { branchId: { in: scope.allowedBranchIds } },
+    orderBy: { openedAt: "desc" },
+    include: {
+      customer: true,
+      vehicle: true,
+      assignedTo: true,
+      recoveryActions: true,
+      tasks: true,
+    },
+  });
+  if (!shouldMaskSensitiveContacts(user.role)) return rows;
+  return rows.map((row) => ({
+    ...row,
+    customer: {
+      ...row.customer,
+      phone: maskPhone(row.customer.phone),
+      email: row.customer.email ? maskEmail(row.customer.email) : null,
+    },
+  }));
+}
+
+export async function getRemindersData() {
+  const scope = await resolveBranchScope();
+  const user = await requireSessionUser();
+  const rows = await prisma.reminder.findMany({
+    where: scope.effectiveBranchId ? { branchId: scope.effectiveBranchId } : { branchId: { in: scope.allowedBranchIds } },
+    orderBy: { dueAt: "asc" },
+    include: {
+      customer: true,
+      vehicle: true,
+      assignedTo: true,
+    },
+  });
+  if (!shouldMaskSensitiveContacts(user.role)) return rows;
+  return rows.map((row) => ({
+    ...row,
+    customer: {
+      ...row.customer,
+      phone: maskPhone(row.customer.phone),
+      email: row.customer.email ? maskEmail(row.customer.email) : null,
+    },
+  }));
+}
+
+export async function getBookingsData() {
+  const scope = await resolveBranchScope();
+  const user = await requireSessionUser();
+  const rows = await prisma.booking.findMany({
+    where: scope.effectiveBranchId ? { branchId: scope.effectiveBranchId } : { branchId: { in: scope.allowedBranchIds } },
+    orderBy: { scheduledStart: "asc" },
+    include: {
+      customer: true,
+      vehicle: true,
+      advisor: true,
+    },
+  });
+  if (!shouldMaskSensitiveContacts(user.role)) return rows;
+  return rows.map((row) => ({
+    ...row,
+    customer: {
+      ...row.customer,
+      phone: maskPhone(row.customer.phone),
+      email: row.customer.email ? maskEmail(row.customer.email) : null,
+    },
+  }));
+}
+
+export async function getSettingsData() {
+  const scope = await resolveBranchScope();
+  const [branch, stages, automationJobs, activeBranches] = await Promise.all([
+    prisma.branch.findFirst({
+      where: scope.effectiveBranchId ? { id: scope.effectiveBranchId } : { id: { in: scope.allowedBranchIds } },
+      include: { manager: true },
+    }),
+    prisma.serviceBlueprintStage.findMany({ orderBy: { stageOrder: "asc" } }),
+    prisma.automationJob.findMany({
+      orderBy: { nextRunAt: "asc" },
+      take: 6,
+      include: {
+        owner: true,
+        blueprintStage: true,
+      },
+    }),
+    prisma.branch.count({ where: { isActive: true } }),
+  ]);
+
+  return {
+    branch,
+    stages,
+    automationJobs,
+    activeBranches,
+    brand: {
+      ...brandIdentity,
+    },
+  };
+}
+
+export async function getCrmFormOptions() {
+  const scope = await resolveBranchScope();
+  const [customers, vehicles, branches, users, transactions] = await Promise.all([
+    prisma.customer.findMany({
+      where: scope.effectiveBranchId ? { branchId: scope.effectiveBranchId } : { branchId: { in: scope.allowedBranchIds } },
+      orderBy: [{ firstName: "asc" }, { lastName: "asc" }],
+      select: { id: true, firstName: true, lastName: true, customerNumber: true },
+    }),
+    prisma.vehicle.findMany({
+      where: scope.effectiveBranchId ? { branchId: scope.effectiveBranchId } : { branchId: { in: scope.allowedBranchIds } },
+      orderBy: [{ make: "asc" }, { model: "asc" }],
+      select: { id: true, make: true, model: true, licensePlate: true },
+    }),
+    prisma.branch.findMany({
+      where: scope.effectiveBranchId ? { id: scope.effectiveBranchId } : { id: { in: scope.allowedBranchIds } },
+      orderBy: { name: "asc" },
+      select: { id: true, name: true },
+    }),
+    prisma.user.findMany({
+      where: scope.effectiveBranchId ? { branchId: scope.effectiveBranchId } : { branchId: { in: scope.allowedBranchIds } },
+      orderBy: { name: "asc" },
+      select: { id: true, name: true },
+    }),
+    prisma.serviceTransaction.findMany({
+      where: scope.effectiveBranchId ? { branchId: scope.effectiveBranchId } : { branchId: { in: scope.allowedBranchIds } },
+      orderBy: { openedAt: "desc" },
+      select: { id: true, serviceNumber: true },
+    }),
+  ]);
+
+  return { customers, vehicles, branches, users, transactions };
+}
+
+export async function getCustomerJourneyData() {
+  const scope = await resolveBranchScope();
+  return prisma.customerJourneyEvent.findMany({
+    where: scope.effectiveBranchId ? { customer: { branchId: scope.effectiveBranchId } } : { customer: { branchId: { in: scope.allowedBranchIds } } },
+    orderBy: { eventAt: "desc" },
+    take: 100,
+    include: {
+      customer: true,
+      vehicle: true,
+      serviceTransaction: true,
+      createdBy: true,
+    },
+  });
+}
+
+export async function getReportsData() {
+  const scope = await resolveBranchScope();
+  const branchWhere = scope.effectiveBranchId
+    ? { branchId: scope.effectiveBranchId }
+    : { branchId: { in: scope.allowedBranchIds } };
+  const [transactions, customers, complaints, reminders, healthScores, activeBookings] =
+    await Promise.all([
+      prisma.serviceTransaction.findMany({
+        where: branchWhere,
+        orderBy: { openedAt: "asc" },
+        select: { openedAt: true, totalAmount: true, status: true, customerId: true },
+      }),
+      prisma.customer.findMany({
+        where: branchWhere,
+        select: {
+          id: true,
+          createdAt: true,
+          serviceTransactions: {
+            where: { status: ServiceStatus.COMPLETED },
+            select: { id: true },
+          },
+        },
+      }),
+      prisma.complaintTicket.findMany({
+        where: branchWhere,
+        orderBy: { openedAt: "asc" },
+        select: { openedAt: true, status: true },
+      }),
+      prisma.reminder.findMany({
+        where: branchWhere,
+        select: { status: true, createdAt: true },
+      }),
+      prisma.customerHealthScore.groupBy({
+        by: ["band"],
+        _count: { band: true },
+      }),
+      prisma.booking.count({
+        where: {
+          ...branchWhere,
+          status: { in: [BookingStatus.REQUESTED, BookingStatus.CONFIRMED] },
+        },
+      }),
+    ]);
+
+  const revenueMap = transactions.reduce<
+    Record<string, { monthKey: string; month: string; revenue: number }>
+  >((acc, transaction) => {
+    if (transaction.status !== ServiceStatus.COMPLETED) {
+      return acc;
+    }
+
+    const key = monthBucket(transaction.openedAt);
+    acc[key] ??= {
+      monthKey: key,
+      month: monthLabel(transaction.openedAt),
+      revenue: 0,
+    };
+    acc[key].revenue += Number(transaction.totalAmount);
+    return acc;
+  }, {});
+
+  const complaintMap = complaints.reduce<
+    Record<string, { monthKey: string; month: string; complaints: number }>
+  >((acc, complaint) => {
+    const key = monthBucket(complaint.openedAt);
+    acc[key] ??= {
+      monthKey: key,
+      month: monthLabel(complaint.openedAt),
+      complaints: 0,
+    };
+    acc[key].complaints += 1;
+    return acc;
+  }, {});
+
+  const repeatCustomers = customers.filter(
+    (customer) => customer.serviceTransactions.length >= 2
+  ).length;
+  const completedReminders = reminders.filter(
+    (reminder) => reminder.status === ReminderStatus.COMPLETED
+  ).length;
+
+  return {
+    revenueTrend: sortMonthSeries(Object.values(revenueMap), 12),
+    complaintTrend: sortMonthSeries(Object.values(complaintMap), 12),
+    kpis: {
+      repeatCustomerRate:
+        customers.length > 0 ? Math.round((repeatCustomers / customers.length) * 100) : 0,
+      complaintRate:
+        customers.length > 0 ? Math.round((complaints.length / customers.length) * 100) : 0,
+      reminderConversion:
+        reminders.length > 0 ? Math.round((completedReminders / reminders.length) * 100) : 0,
+      activeBookings,
+    },
+    healthDistribution: healthScores.map((item) => ({
+      band: item.band,
+      count: item._count.band,
+    })),
+  };
+}
+
+export async function getTodayBookingsData() {
+  const scope = await resolveBranchScope();
+  const now = new Date();
+  const { start, end } = todayRange(now);
+  return prisma.booking.findMany({
+    where: {
+      ...(scope.effectiveBranchId
+        ? { branchId: scope.effectiveBranchId }
+        : { branchId: { in: scope.allowedBranchIds } }),
+      scheduledStart: { gte: start, lte: end },
+    },
+    orderBy: { scheduledStart: "asc" },
+    include: { customer: true, vehicle: true, advisor: true },
+  });
+}
+
+export async function getComplaintRecoveryListData() {
+  const scope = await resolveBranchScope();
+  return prisma.complaintTicket.findMany({
+    where: {
+      ...(scope.effectiveBranchId
+        ? { branchId: scope.effectiveBranchId }
+        : { branchId: { in: scope.allowedBranchIds } }),
+      status: { in: [ComplaintStatus.OPEN, ComplaintStatus.INVESTIGATING, ComplaintStatus.WAITING_CUSTOMER] },
+    },
+    orderBy: [{ priority: "desc" }, { openedAt: "asc" }],
+    include: { customer: true, vehicle: true, assignedTo: true },
+    take: 50,
+  });
+}
+
+export async function getCustomerQuickLookupData(query: string) {
+  const scope = await resolveBranchScope();
+  const keyword = query.trim();
+  if (!keyword) return [];
+  return prisma.customer.findMany({
+    where: {
+      ...(scope.effectiveBranchId
+        ? { branchId: scope.effectiveBranchId }
+        : { branchId: { in: scope.allowedBranchIds } }),
+      OR: [
+        { phone: { contains: keyword, mode: "insensitive" } },
+        { firstName: { contains: keyword, mode: "insensitive" } },
+        { lastName: { contains: keyword, mode: "insensitive" } },
+        {
+          vehicles: {
+            some: {
+              licensePlate: { contains: keyword, mode: "insensitive" },
+            },
+          },
+        },
+      ],
+    },
+    include: {
+      vehicles: { orderBy: { updatedAt: "desc" }, take: 3 },
+      healthScore: true,
+      branch: true,
+    },
+    take: 20,
+    orderBy: { updatedAt: "desc" },
+  });
+}
+
+export async function getBranchesOverviewData(filters?: { branchId?: string; from?: Date; to?: Date }) {
+  const scope = await resolveBranchScope(filters?.branchId);
+  const transactionDateWhere = buildDateFilter("openedAt", { from: filters?.from, to: filters?.to });
+  const bookingDateWhere = buildDateFilter("scheduledStart", { from: filters?.from, to: filters?.to });
+  const [branches, revenues, transactions, bookings, complaints, reminders, surveys] = await Promise.all([
+    prisma.branch.findMany({
+      where: scope.effectiveBranchId ? { id: scope.effectiveBranchId } : { id: { in: scope.allowedBranchIds } },
+      orderBy: { name: "asc" },
+    }),
+    prisma.serviceTransaction.groupBy({
+      by: ["branchId"],
+      where: { ...transactionDateWhere, status: ServiceStatus.COMPLETED, ...(scope.effectiveBranchId ? { branchId: scope.effectiveBranchId } : { branchId: { in: scope.allowedBranchIds } }) },
+      _sum: { totalAmount: true },
+    }),
+    prisma.serviceTransaction.groupBy({
+      by: ["branchId"],
+      where: { ...transactionDateWhere, ...(scope.effectiveBranchId ? { branchId: scope.effectiveBranchId } : { branchId: { in: scope.allowedBranchIds } }) },
+      _count: { id: true },
+    }),
+    prisma.booking.groupBy({
+      by: ["branchId"],
+      where: { ...bookingDateWhere, ...(scope.effectiveBranchId ? { branchId: scope.effectiveBranchId } : { branchId: { in: scope.allowedBranchIds } }) },
+      _count: { id: true },
+    }),
+    prisma.complaintTicket.groupBy({
+      by: ["branchId"],
+      where: { ...(scope.effectiveBranchId ? { branchId: scope.effectiveBranchId } : { branchId: { in: scope.allowedBranchIds } }) },
+      _count: { id: true },
+    }),
+    prisma.reminder.groupBy({
+      by: ["branchId"],
+      where: { ...(scope.effectiveBranchId ? { branchId: scope.effectiveBranchId } : { branchId: { in: scope.allowedBranchIds } }) },
+      _count: { id: true },
+    }),
+    prisma.followUpSurvey.groupBy({
+      by: ["customerId"],
+      where: { status: SurveyStatus.COMPLETED, score: { not: null } },
+      _avg: { score: true },
+    }),
+  ]);
+
+  const row = branches.map((branch) => ({
+    ...branch,
+    revenue: Number(revenues.find((item) => item.branchId === branch.id)?._sum.totalAmount ?? 0),
+    transactions: transactions.find((item) => item.branchId === branch.id)?._count.id ?? 0,
+    bookings: bookings.find((item) => item.branchId === branch.id)?._count.id ?? 0,
+    complaints: complaints.find((item) => item.branchId === branch.id)?._count.id ?? 0,
+    reminders: reminders.find((item) => item.branchId === branch.id)?._count.id ?? 0,
+    customerSatisfaction: Math.round(((surveys.reduce((sum, survey) => sum + Number(survey._avg.score ?? 0), 0) / Math.max(surveys.length, 1)) / 5) * 100),
+  }));
+
+  return {
+    scope,
+    branches: row.sort((a, b) => b.revenue - a.revenue),
+  };
+}
+
+export async function getBranchDetailData(id: string, filters?: { from?: Date; to?: Date }) {
+  const scope = await resolveBranchScope(id);
+  if (scope.effectiveBranchId && scope.effectiveBranchId !== id) {
+    return null;
+  }
+  const transactionDateWhere = buildDateFilter("openedAt", { from: filters?.from, to: filters?.to });
+  const bookingDateWhere = buildDateFilter("scheduledStart", { from: filters?.from, to: filters?.to });
+  const reminderDateWhere = buildDateFilter("dueAt", { from: filters?.from, to: filters?.to });
+
+  const [branch, users, transactions, bookings, complaints, reminders, surveys] = await Promise.all([
+    prisma.branch.findUnique({ where: { id } }),
+    prisma.user.findMany({ where: { branchId: id }, include: { role: true }, orderBy: { name: "asc" } }),
+    prisma.serviceTransaction.findMany({
+      where: { branchId: id, ...transactionDateWhere },
+      include: { customer: true, vehicle: true, advisor: true },
+      orderBy: { openedAt: "desc" },
+      take: 20,
+    }),
+    prisma.booking.findMany({
+      where: { branchId: id, ...bookingDateWhere },
+      include: { customer: true, vehicle: true, advisor: true },
+      orderBy: { scheduledStart: "desc" },
+      take: 20,
+    }),
+    prisma.complaintTicket.findMany({
+      where: { branchId: id },
+      include: { customer: true, assignedTo: true },
+      orderBy: { openedAt: "desc" },
+      take: 20,
+    }),
+    prisma.reminder.findMany({
+      where: { branchId: id, ...reminderDateWhere },
+      include: { customer: true, assignedTo: true, vehicle: true },
+      orderBy: { dueAt: "desc" },
+      take: 20,
+    }),
+    prisma.followUpSurvey.aggregate({
+      where: { customer: { branchId: id }, status: SurveyStatus.COMPLETED, score: { not: null } },
+      _avg: { score: true },
+    }),
+  ]);
+
+  if (!branch) return null;
+  const completedTransactions = transactions.filter((item) => item.status === ServiceStatus.COMPLETED);
+  const uniqueCustomers = new Set(completedTransactions.map((item) => item.customerId));
+  const repeatCustomers = completedTransactions.reduce<Record<string, number>>((acc, tx) => {
+    acc[tx.customerId] = (acc[tx.customerId] ?? 0) + 1;
+    return acc;
+  }, {});
+  const repeatCustomerRate =
+    uniqueCustomers.size > 0
+      ? Math.round(
+          (Object.values(repeatCustomers).filter((count) => count >= 2).length /
+            uniqueCustomers.size) *
+            100
+        )
+      : 0;
+
+  return {
+    branch,
+    users,
+    transactions,
+    bookings,
+    complaints,
+    reminders,
+    metrics: {
+      revenue: completedTransactions.reduce((sum, tx) => sum + Number(tx.totalAmount), 0),
+      transactions: transactions.length,
+      bookings: bookings.length,
+      complaints: complaints.length,
+      reminders: reminders.length,
+      customerSatisfaction: Math.round(((surveys._avg.score ?? 0) / 5) * 100),
+      repeatCustomerRate,
+    },
+  };
+}
