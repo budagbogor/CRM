@@ -24,9 +24,18 @@ import {
 import { hashPassword } from "../src/lib/password";
 
 const databaseUrl = process.env.DATABASE_URL;
+const appEnv = process.env.APP_ENV;
+const nodeEnv = process.env.NODE_ENV;
+const allowDemoSeed = process.env.ALLOW_DEMO_SEED === "true";
 
 if (!databaseUrl) {
   throw new Error("DATABASE_URL is required to seed the database.");
+}
+
+if ((appEnv === "production" || nodeEnv === "production") && !allowDemoSeed) {
+  throw new Error(
+    "Demo seed is blocked in production. Set ALLOW_DEMO_SEED=true only for controlled non-production demo reset."
+  );
 }
 
 const adapter = new PrismaPg({ connectionString: databaseUrl });

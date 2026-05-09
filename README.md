@@ -118,6 +118,12 @@ npm run build
 npx prisma validate
 ```
 
+Production migration command:
+
+```bash
+npx prisma migrate deploy
+```
+
 ## Demo User Roles
 
 The demo uses seeded users to represent the operating team:
@@ -232,26 +238,101 @@ Fondasi integrasi production yang sudah disiapkan:
 4. `FileUpload` table + `src/services/uploads` untuk metadata upload komplain dan storage provider interface (mock-local).
 5. `src/lib/logger.ts`, `src/lib/api-error.ts`, dan `src/lib/rate-limit.ts` untuk baseline readiness (structured logs, API error handler, rate-limit placeholder).
 
+## Daily Transaction Import (POS Integration)
+
+Mobeng CRM menerima data transaksi harian dari sistem operasional/POS eksternal melalui dua jalur:
+
+1. UI upload: `/integrations/transactions` (CSV/XLSX, preview, validasi, confirm import)
+2. API batch: `POST /api/integrations/transactions/import`
+
+Header API wajib:
+
+- `x-api-key: <INTEGRATION_API_KEY>`
+
+Endpoint log:
+
+- `/integrations/imports` untuk melihat riwayat import, statistik sukses/gagal, dan detail error row.
+
+Duplicate handling:
+
+- `SKIP`: invoice lama dilewati
+- `UPDATE`: invoice lama diperbarui
+
+Retention trigger setelah import transaksi sukses (status completed):
+
+- create journey event
+- create thank-you notification log
+- schedule H+3 follow-up flow
+- calculate next-service reminder flow (via retention service)
+- update customer health score
+
+## Production Deployment (Vercel)
+
+Konfigurasi deployment production sudah disiapkan:
+
+- `vercel.json` untuk Next.js runtime dan API function duration
+- `postinstall` script (`prisma generate`) agar client Prisma selalu tersedia di build environment
+- `/api/health` untuk health check app + database
+
+Langkah deploy ringkas:
+
+1. Push repo ke Git provider yang terhubung ke Vercel.
+2. Set environment variables production di Vercel Project Settings.
+3. Jalankan migration ke production DB:
+   ```bash
+   npx prisma migrate deploy
+   ```
+4. Deploy.
+5. Verifikasi endpoint:
+   - `/api/health`
+   - `/login`
+
+Catatan cloud PostgreSQL:
+
+- `DATABASE_URL` gunakan connection string pooler (recommended untuk serverless/runtime).
+- `DIRECT_URL` gunakan direct connection (recommended untuk migration/admin tasks).
+
 ## Required Environment Variables
 
-Variabel minimum untuk menjalankan mode aman:
+Variabel minimum production:
 
+- `NODE_ENV` (`production`)
+- `APP_ENV` (`production`)
+- `APP_NAME`
+- `APP_VERSION`
+- `AUTH_SECRET`
+- `INTEGRATION_API_KEY`
 - `DATABASE_URL`
 - `DIRECT_URL`
-- `SESSION_SECRET`
-- `NODE_ENV`
-- `APP_ENV` (`development` | `demo` | `production`)
-- `JOB_RUNNER_MODE` (`memory` | `database`)
-- `RATE_LIMIT_AUTH_MAX`
-- `RATE_LIMIT_AUTH_WINDOW_MS`
-- `RATE_LIMIT_API_MAX`
-- `RATE_LIMIT_API_WINDOW_MS`
+- `NOTIFICATION_PROVIDER_WHATSAPP`
+- `NOTIFICATION_PROVIDER_EMAIL`
+- `NOTIFICATION_PROVIDER_SMS`
+- `DEFAULT_NOTIFICATION_FROM_EMAIL`
+- `DEFAULT_NOTIFICATION_FROM_NAME`
+- `JOB_RUNNER_MODE`
+- `JOB_RUNNER_POLL_INTERVAL_MS`
+- `FILE_STORAGE_PROVIDER`
+- `UPLOAD_MAX_MB`
+- `RATE_LIMIT_MAX_REQUESTS`
+- `RATE_LIMIT_WINDOW_MS`
+- `ALLOW_DEMO_SEED` (`false` in production)
+
+## Migration & Seed Notes
+
+- Development:
+  - `npm run prisma:migrate -- --name <migration_name>`
+- Production:
+  - `npx prisma migrate deploy`
+- Demo seed/reset:
+  - `npm run db:seed`
+  - Seed otomatis diblokir saat `APP_ENV=production` atau `NODE_ENV=production` kecuali `ALLOW_DEMO_SEED=true`.
+  - Jangan aktifkan `ALLOW_DEMO_SEED` pada deployment production normal.
 
 ## Production Security Checklist
 
 Sebelum deploy production, pastikan:
 
-1. `SESSION_SECRET` kuat (panjang, acak, rotasi berkala).
+1. `AUTH_SECRET` kuat (panjang, acak, rotasi berkala).
 2. Cookie session `httpOnly`, `sameSite=lax`, `secure` aktif di production HTTPS.
 3. Semua route privat dan API sensitif berada di belakang middleware auth + RBAC.
 4. Rate limiting aktif untuk login dan API publik.
@@ -269,6 +350,34 @@ Sebelum deploy production, pastikan:
 - Batasi akses network database hanya dari service app/worker.
 - Jalankan migrasi dengan akun DB terbatas.
 - Aktifkan observability untuk auth failure, burst API, dan error rate.
+
+## Backup & Maintenance Notes
+
+Rekomendasi backup database:
+
+1. Aktifkan automated daily backup di provider PostgreSQL.
+2. Simpan minimal 7-30 hari retention backup.
+3. Lakukan backup tambahan sebelum migration production besar.
+
+Restore notes:
+
+1. Restore ke environment staging terlebih dahulu.
+2. Validasi data kritikal (customer, transaction, reminder, complaint).
+3. Setelah valid, restore ke production sesuai prosedur change window.
+
+Migration notes:
+
+1. Selalu review SQL migration sebelum `migrate deploy`.
+2. Jalankan migration saat traffic rendah.
+3. Pantau error app + DB metrics segera setelah migration.
+
+Rollback notes:
+
+1. Prisma tidak menyediakan "down migration" otomatis by default.
+2. Strategi rollback utama:
+   - restore dari backup terakhir
+   - atau hotfix migration forward untuk memperbaiki state.
+3. Siapkan runbook internal untuk incident DB rollback.
 
 ## Production Integrations Needed
 

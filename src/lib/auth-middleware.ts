@@ -34,7 +34,10 @@ export function enforceRbac(request: NextRequest) {
     );
   }
 
-  if (pathname === "/login" || pathname === "/unauthorized") return NextResponse.next();
+  if (pathname === "/login" || pathname === "/unauthorized" || pathname === "/api/health") {
+    return NextResponse.next();
+  }
+  if (pathname === "/api/integrations/transactions/import") return NextResponse.next();
 
   const role = parseRoleFromToken(request.cookies.get(SESSION_COOKIE)?.value);
   if (!role) {

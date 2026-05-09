@@ -1156,3 +1156,20 @@ export async function getBranchDetailData(id: string, filters?: { from?: Date; t
     },
   };
 }
+
+export async function getTransactionImportLogsData() {
+  const scope = await resolveBranchScope();
+  const where = scope.effectiveBranchId
+    ? { OR: [{ branchId: scope.effectiveBranchId }, { branchId: null }] }
+    : { OR: [{ branchId: { in: scope.allowedBranchIds } }, { branchId: null }] };
+
+  return prisma.transactionImportLog.findMany({
+    where,
+    include: {
+      branch: { select: { name: true, code: true } },
+      importedBy: { select: { name: true, email: true } },
+    },
+    orderBy: { importedAt: "desc" },
+    take: 100,
+  });
+}

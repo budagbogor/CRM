@@ -8,6 +8,7 @@ import {
   CalendarClock,
   Car,
   ClipboardCheck,
+  Database,
   GitBranch,
   Gauge,
   LayoutDashboard,
@@ -36,6 +37,7 @@ const navigation = [
   { name: "Journey", href: "/journey", icon: GitBranch },
   { name: "Reminder", href: "/reminders", icon: Bell },
   { name: "Bookings", href: "/bookings", icon: CalendarClock },
+  { name: "Integrasi", href: "/integrations/transactions", icon: Database },
   { name: "Laporan", href: "/reports", icon: BarChart3 },
   { name: "Pengaturan", href: "/settings", icon: Settings },
 ];

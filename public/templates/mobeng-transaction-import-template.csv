@@ -1,0 +1,2 @@
+invoice_number,transaction_date,branch_name,customer_name,customer_phone,customer_email,vehicle_plate,vehicle_brand,vehicle_model,vehicle_year,mileage,service_category,service_description,parts_replaced,total_amount,service_advisor,technician_name,payment_status
+INV-MBG-0001,2026-05-10T10:30:00+07:00,Mobeng BSD,Andi Pratama,081234567890,andi@example.com,B1234XYZ,Toyota,Avanza,2020,45210,Oli Mobil,Ganti oli mesin + cek filter,"Filter Oli,Engine Oil",850000,Ayu Lestari,Dimas Wijaya,PAID

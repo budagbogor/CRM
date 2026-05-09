@@ -194,6 +194,22 @@ enum HealthScoreBand {
   LOST
 }
 
+enum ImportSource {
+  UPLOAD
+  API
+}
+
+enum ImportDuplicateMode {
+  SKIP
+  UPDATE
+}
+
+enum ImportStatus {
+  SUCCESS
+  PARTIAL
+  FAILED
+}
+
 model Role {
   id          String   @id @default(cuid())
   name        String   @unique
@@ -233,6 +249,7 @@ model User {
   assignedTasks        Task[]                 @relation("TaskAssignee")
   createdTasks         Task[]                 @relation("TaskCreator")
   uploadedFiles        FileUpload[]           @relation("FileUploader")
+  importLogs           TransactionImportLog[] @relation("ImportByUser")
 
   @@index([roleId])
   @@index([branchId])
@@ -265,6 +282,7 @@ model Branch {
   complaints          ComplaintTicket[]
   reminders           Reminder[]
   bookings            Booking[]
+  importLogs          TransactionImportLog[]
 
   @@index([managerId])
 }
@@ -761,4 +779,31 @@ model FileUpload {
   @@index([complaintTicketId])
   @@index([uploadedById])
   @@index([storageProvider])
+}
+
+model TransactionImportLog {
+  id            String              @id @default(cuid())
+  fileName      String
+  source        ImportSource
+  duplicateMode ImportDuplicateMode @default(SKIP)
+  status        ImportStatus        @default(SUCCESS)
+  branchId       String?
+  importedById  String?
+  totalRows     Int                 @default(0)
+  successRows   Int                 @default(0)
+  failedRows    Int                 @default(0)
+  skippedRows   Int                 @default(0)
+  errorDetails  Json?
+  importedAt    DateTime            @default(now())
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+
+  branch     Branch? @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  importedBy User?   @relation("ImportByUser", fields: [importedById], references: [id], onDelete: SetNull)
+
+  @@index([source])
+  @@index([status])
+  @@index([branchId])
+  @@index([importedById])
+  @@index([importedAt])
 }

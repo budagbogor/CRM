@@ -18,7 +18,7 @@ export function toneForStatus(status: string): StatusTone {
   }
 
   if (
-    ["pending", "requested", "watch", "in progress", "investigating", "snoozed", "in service"].includes(
+    ["pending", "requested", "watch", "in progress", "investigating", "snoozed", "in service", "partial"].includes(
       normalized
     )
   ) {
