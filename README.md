@@ -14,6 +14,7 @@ Brand:
 
 Core product rules and workflow detail live in [docs/PRD.md](./docs/PRD.md).
 Structured presentation script for owner/management demo is available at [docs/mobeng-demo-script.md](./docs/mobeng-demo-script.md).
+Go-live readiness checklist tersedia di [docs/GO_LIVE_CHECKLIST.md](./docs/GO_LIVE_CHECKLIST.md).
 
 ## Stack
 
