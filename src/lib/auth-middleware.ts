@@ -34,7 +34,12 @@ export function enforceRbac(request: NextRequest) {
     );
   }
 
-  if (pathname === "/login" || pathname === "/unauthorized" || pathname === "/api/health") {
+  if (
+    pathname === "/login" ||
+    pathname === "/unauthorized" ||
+    pathname === "/api/health" ||
+    pathname === "/api/cron/process-jobs"
+  ) {
     return NextResponse.next();
   }
   if (pathname === "/api/integrations/transactions/import") return NextResponse.next();

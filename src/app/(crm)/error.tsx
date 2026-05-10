@@ -7,10 +7,11 @@ export default function Error({
   error: Error & { digest?: string };
   reset: () => void;
 }) {
+  void error;
   return (
     <div className="rounded-lg border border-rose-200 bg-rose-50 p-6 text-rose-900 dark:border-rose-900 dark:bg-rose-950 dark:text-rose-100">
-      <h2 className="text-base font-semibold">Something went wrong</h2>
-      <p className="mt-2 text-sm">{error.message}</p>
+      <h2 className="text-base font-semibold">Terjadi kendala sementara</h2>
+      <p className="mt-2 text-sm">Silakan coba lagi. Jika masalah berlanjut, hubungi Admin Mobeng CRM.</p>
       <button
         type="button"
         onClick={reset}

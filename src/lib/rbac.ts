@@ -18,6 +18,7 @@ export type PermissionScope =
   | "reminders"
   | "bookings"
   | "integrations"
+  | "admin"
   | "reports"
   | "settings";
 export type PermissionAction = "read" | "write";
@@ -33,18 +34,19 @@ export const routeRoleMatrix: Array<{ prefix: string; roles: AppRole[] }> = [
   { prefix: "/reminders", roles: ["Admin", "Owner", "Manager", "Customer Service"] },
   { prefix: "/bookings", roles: ["Admin", "Owner", "Manager", "Customer Service"] },
   { prefix: "/integrations", roles: ["Admin", "Owner", "Manager", "Service Advisor", "Customer Service"] },
+  { prefix: "/admin", roles: ["Admin"] },
   { prefix: "/reports", roles: ["Admin", "Owner", "Manager", "Marketing CRM"] },
   { prefix: "/settings", roles: ["Admin"] },
 ];
 
 export const permissionMatrix: Record<AppRole, Record<PermissionScope, PermissionAction>> = {
-  Admin: { dashboard: "write", branches: "write", customers: "write", vehicles: "write", transactions: "write", complaints: "write", "follow-ups": "write", reminders: "write", bookings: "write", integrations: "write", reports: "write", settings: "write" },
-  Owner: { dashboard: "read", branches: "read", customers: "read", vehicles: "read", transactions: "read", complaints: "read", "follow-ups": "read", reminders: "read", bookings: "read", integrations: "read", reports: "read", settings: "read" },
-  Manager: { dashboard: "read", branches: "read", customers: "write", vehicles: "write", transactions: "write", complaints: "write", "follow-ups": "read", reminders: "write", bookings: "write", integrations: "write", reports: "read", settings: "read" },
-  "Service Advisor": { dashboard: "read", branches: "read", customers: "write", vehicles: "write", transactions: "write", complaints: "write", "follow-ups": "read", reminders: "read", bookings: "read", integrations: "write", reports: "read", settings: "read" },
-  "Customer Service": { dashboard: "read", branches: "read", customers: "read", vehicles: "read", transactions: "read", complaints: "read", "follow-ups": "write", reminders: "write", bookings: "write", integrations: "write", reports: "read", settings: "read" },
-  Technician: { dashboard: "read", branches: "read", customers: "read", vehicles: "read", transactions: "read", complaints: "read", "follow-ups": "read", reminders: "read", bookings: "read", integrations: "read", reports: "read", settings: "read" },
-  "Marketing CRM": { dashboard: "read", branches: "read", customers: "read", vehicles: "read", transactions: "read", complaints: "read", "follow-ups": "read", reminders: "read", bookings: "read", integrations: "read", reports: "write", settings: "read" },
+  Admin: { dashboard: "write", branches: "write", customers: "write", vehicles: "write", transactions: "write", complaints: "write", "follow-ups": "write", reminders: "write", bookings: "write", integrations: "write", admin: "write", reports: "write", settings: "write" },
+  Owner: { dashboard: "read", branches: "read", customers: "read", vehicles: "read", transactions: "read", complaints: "read", "follow-ups": "read", reminders: "read", bookings: "read", integrations: "read", admin: "read", reports: "read", settings: "read" },
+  Manager: { dashboard: "read", branches: "read", customers: "write", vehicles: "write", transactions: "write", complaints: "write", "follow-ups": "read", reminders: "write", bookings: "write", integrations: "write", admin: "read", reports: "read", settings: "read" },
+  "Service Advisor": { dashboard: "read", branches: "read", customers: "write", vehicles: "write", transactions: "write", complaints: "write", "follow-ups": "read", reminders: "read", bookings: "read", integrations: "write", admin: "read", reports: "read", settings: "read" },
+  "Customer Service": { dashboard: "read", branches: "read", customers: "read", vehicles: "read", transactions: "read", complaints: "read", "follow-ups": "write", reminders: "write", bookings: "write", integrations: "write", admin: "read", reports: "read", settings: "read" },
+  Technician: { dashboard: "read", branches: "read", customers: "read", vehicles: "read", transactions: "read", complaints: "read", "follow-ups": "read", reminders: "read", bookings: "read", integrations: "read", admin: "read", reports: "read", settings: "read" },
+  "Marketing CRM": { dashboard: "read", branches: "read", customers: "read", vehicles: "read", transactions: "read", complaints: "read", "follow-ups": "read", reminders: "read", bookings: "read", integrations: "read", admin: "read", reports: "write", settings: "read" },
 };
 
 export function canAccessRoute(pathname: string, role: AppRole) {

@@ -19,6 +19,12 @@ export async function auditLog(input: {
         metadata: (input.metadata ?? {}) as Prisma.InputJsonValue,
       },
     });
+    logger.info("Audit event written", {
+      action: input.action,
+      entityType: input.entityType,
+      entityId: input.entityId,
+      userId: input.userId,
+    });
   } catch (error) {
     logger.error("Failed to write audit log", {
       action: input.action,

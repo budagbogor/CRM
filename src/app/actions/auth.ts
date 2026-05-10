@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { headers } from "next/headers";
 import { clearSession, createSessionForUser, getSessionUser, authenticateLogin, logLogout } from "@/lib/auth";
 import { checkRateLimit } from "@/lib/rate-limit";
+import { logger } from "@/lib/logger";
 
 export async function loginAction(_prev: { error?: string } | null, formData: FormData) {
   const email = String(formData.get("email") ?? "").trim().toLowerCase();
@@ -20,16 +21,19 @@ export async function loginAction(_prev: { error?: string } | null, formData: Fo
 
   const user = await authenticateLogin(email, password);
   if (!user) {
+    logger.warn("Login failed", { email, ip });
     return { error: "Email atau password tidak valid." };
   }
 
   await createSessionForUser(user);
+  logger.info("Login success", { userId: user.id, email: user.email, ip });
   redirect("/dashboard");
 }
 
 export async function logoutAction() {
   const user = await getSessionUser();
   await logLogout(user?.id);
+  logger.info("Logout", { userId: user?.id });
   await clearSession();
   redirect("/login");
 }

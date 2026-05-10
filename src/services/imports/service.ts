@@ -16,6 +16,7 @@ import {
   type TransactionImportRow,
 } from "@/lib/validations/transaction-import";
 import { calculateCustomerHealthScore, createPostTransactionRetentionFlow } from "@/services/retention";
+import { logger } from "@/lib/logger";
 
 type ImportErrorItem = { row: number; invoiceNumber?: string; error: string };
 
@@ -125,6 +126,13 @@ export async function runTransactionImport({
   fileName,
   importedById,
 }: RunImportParams) {
+  logger.info("Transaction import started", {
+    source,
+    fileName,
+    duplicateMode,
+    totalRows: rows.length,
+    importedById: importedById ?? null,
+  });
   const { validRows, errors: validationErrors } = validateImportRows(rows);
   let successRows = 0;
   let failedRows = validationErrors.length;
@@ -343,6 +351,28 @@ export async function runTransactionImport({
       errorDetails: rowErrors,
     },
   });
+
+  if (failedRows > 0) {
+    logger.warn("Transaction import completed with failures", {
+      source,
+      fileName,
+      totalRows: rows.length,
+      successRows,
+      failedRows,
+      skippedRows,
+      logId: log.id,
+    });
+  } else {
+    logger.info("Transaction import completed", {
+      source,
+      fileName,
+      totalRows: rows.length,
+      successRows,
+      failedRows,
+      skippedRows,
+      logId: log.id,
+    });
+  }
 
   return {
     logId: log.id,

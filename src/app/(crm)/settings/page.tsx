@@ -1,4 +1,5 @@
 import { Building2, Settings2, Workflow } from "lucide-react";
+import { TestNotificationForm } from "@/components/crm/test-notification-form";
 import { DashboardCard } from "@/components/ui/dashboard-card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { PageHeader } from "@/components/ui/page-header";
@@ -16,7 +17,7 @@ const categoryOrder = [
 ] as const;
 
 export default async function SettingsPage() {
-  const { branch, stages, automationJobs, activeBranches, brand } = await getSettingsData();
+  const { branch, stages, automationJobs, activeBranches, brand, notification } = await getSettingsData();
 
   return (
     <div className="space-y-6">
@@ -72,6 +73,36 @@ export default async function SettingsPage() {
           <SummaryItem label="WhatsApp" value={brand.whatsappNumber} />
           <SummaryItem label="Active branches" value={`${activeBranches} outlet`} />
         </dl>
+      </section>
+
+      <section className="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h2 className="text-base font-semibold text-zinc-950 dark:text-white">
+              Notification Provider Settings
+            </h2>
+            <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
+              Status konfigurasi provider notifikasi production. Nilai credential ditampilkan dalam mode masked.
+            </p>
+          </div>
+          <StatusBadge tone="info">{notification.selectedProvider}</StatusBadge>
+        </div>
+        <dl className="mt-5 grid gap-4 text-sm sm:grid-cols-2 xl:grid-cols-3">
+          <SummaryItem label="WhatsApp configured" value={notification.whatsapp.configured ? "Yes" : "No"} />
+          <SummaryItem label="WhatsApp API version" value={notification.whatsapp.apiVersion} />
+          <SummaryItem label="WA token" value={notification.whatsapp.accessTokenMasked} />
+          <SummaryItem label="WA phone number id" value={notification.whatsapp.phoneNumberIdMasked} />
+          <SummaryItem label="WA business account id" value={notification.whatsapp.businessAccountIdMasked} />
+          <SummaryItem label="Email provider" value={notification.emailProvider} />
+          <SummaryItem label="Email configured" value={notification.email.configuredMock || notification.email.configuredSmtp || notification.email.configuredResend ? "Yes" : "No"} />
+          <SummaryItem label="Email from" value={notification.email.from} />
+          <SummaryItem label="SMTP host" value={notification.email.smtpHostMasked} />
+          <SummaryItem label="SMTP user" value={notification.email.smtpUserMasked} />
+          <SummaryItem label="Resend key" value={notification.email.resendKeyMasked} />
+        </dl>
+        <div className="mt-5">
+          <TestNotificationForm />
+        </div>
       </section>
 
       {branch ? (

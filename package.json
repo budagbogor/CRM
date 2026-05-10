@@ -12,6 +12,7 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:studio": "prisma studio",
     "db:seed": "tsx prisma/seed.ts",
+    "jobs:process": "tsx scripts/process-jobs.ts",
     "test": "vitest run"
   },
   "dependencies": {

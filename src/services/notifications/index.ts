@@ -7,7 +7,11 @@ import {
   MockEmailProvider,
   MockSmsProvider,
   MockWhatsappProvider,
-} from "./mock-providers";
+  ResendEmailProvider,
+  SmtpEmailProvider,
+  WhatsAppCloudApiProvider,
+} from "./providers";
+import { renderNotificationTemplate } from "./templates";
 import type {
   DeliveryLogInput,
   NotificationPayload,
@@ -15,14 +19,64 @@ import type {
   NotificationTemplatePayload,
 } from "./types";
 
-const whatsappProvider: NotificationProvider = new MockWhatsappProvider();
-const emailProvider: NotificationProvider = new MockEmailProvider();
+function selectWhatsappProvider(): NotificationProvider {
+  if (env.NOTIFICATION_PROVIDER === "whatsapp_cloud_api") {
+    return new WhatsAppCloudApiProvider();
+  }
+  return new MockWhatsappProvider();
+}
+
+function selectEmailProvider(): NotificationProvider {
+  if (env.EMAIL_PROVIDER === "smtp") return new SmtpEmailProvider();
+  if (env.EMAIL_PROVIDER === "resend") return new ResendEmailProvider();
+  return new MockEmailProvider();
+}
+
+const whatsappProvider: NotificationProvider = selectWhatsappProvider();
+const emailProvider: NotificationProvider = selectEmailProvider();
 const smsProvider: NotificationProvider = new MockSmsProvider();
 
 function providerFromChannel(channel: "WHATSAPP" | "EMAIL" | "SMS") {
   if (channel === "WHATSAPP") return whatsappProvider;
   if (channel === "EMAIL") return emailProvider;
   return smsProvider;
+}
+
+function maskSecret(value?: string) {
+  if (!value) return "Not configured";
+  if (value.length <= 8) return "********";
+  return `${value.slice(0, 4)}****${value.slice(-4)}`;
+}
+
+export function getNotificationProviderStatus() {
+  return {
+    selectedProvider: env.NOTIFICATION_PROVIDER,
+    emailProvider: env.EMAIL_PROVIDER,
+    whatsapp: {
+      configured:
+        !!env.WHATSAPP_ACCESS_TOKEN &&
+        !!env.WHATSAPP_PHONE_NUMBER_ID &&
+        !!env.WHATSAPP_BUSINESS_ACCOUNT_ID,
+      apiVersion: env.WHATSAPP_API_VERSION,
+      accessTokenMasked: maskSecret(env.WHATSAPP_ACCESS_TOKEN),
+      phoneNumberIdMasked: maskSecret(env.WHATSAPP_PHONE_NUMBER_ID),
+      businessAccountIdMasked: maskSecret(env.WHATSAPP_BUSINESS_ACCOUNT_ID),
+    },
+    email: {
+      configuredMock: env.EMAIL_PROVIDER === "mock",
+      configuredSmtp:
+        env.EMAIL_PROVIDER === "smtp" &&
+        !!env.SMTP_HOST &&
+        !!env.SMTP_PORT &&
+        !!env.SMTP_USER &&
+        !!env.SMTP_PASS,
+      configuredResend: env.EMAIL_PROVIDER === "resend" && !!env.RESEND_API_KEY,
+      from: env.EMAIL_FROM,
+      smtpHostMasked: maskSecret(env.SMTP_HOST),
+      smtpUserMasked: maskSecret(env.SMTP_USER),
+      resendKeyMasked: maskSecret(env.RESEND_API_KEY),
+    },
+  };
 }
 
 async function logDelivery(input: DeliveryLogInput) {
@@ -42,20 +96,6 @@ async function logDelivery(input: DeliveryLogInput) {
       failedAt: input.status === "FAILED" ? new Date() : null,
     },
   });
-}
-
-function renderTemplate(payload: NotificationTemplatePayload) {
-  const renderedVars = Object.entries(payload.variables ?? {})
-    .map(([key, value]) => `${key}: ${value}`)
-    .join(", ");
-  const message = renderedVars
-    ? `Template ${payload.templateKey} - ${renderedVars}`
-    : `Template ${payload.templateKey}`;
-
-  return {
-    subject: `Mobeng CRM: ${payload.templateKey}`,
-    message,
-  };
 }
 
 export const notificationService = {
@@ -97,7 +137,7 @@ export const notificationService = {
         customerId: payload.customerId,
         userId: payload.userId,
         status: "FAILED",
-        failureReason: error instanceof Error ? error.message : "Unknown error",
+        failureReason: "Delivery failed. Check provider logs.",
       });
       throw error;
     }
@@ -108,7 +148,7 @@ export const notificationService = {
     payload: NotificationTemplatePayload & { customerId?: string; userId?: string }
   ) {
     const provider = providerFromChannel(channel);
-    const rendered = renderTemplate(payload);
+    const rendered = renderNotificationTemplate(payload);
     try {
       const result = await provider.sendTemplate(payload);
       await logDelivery({
@@ -145,7 +185,7 @@ export const notificationService = {
         customerId: payload.customerId,
         userId: payload.userId,
         status: "FAILED",
-        failureReason: error instanceof Error ? error.message : "Unknown error",
+        failureReason: "Template delivery failed. Check provider logs.",
       });
       throw error;
     }
@@ -153,4 +193,5 @@ export const notificationService = {
 };
 
 export * from "./types";
-export * from "./mock-providers";
+export * from "./providers";
+export * from "./templates";

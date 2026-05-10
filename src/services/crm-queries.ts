@@ -1,6 +1,8 @@
 import { prisma } from "@/lib/prisma";
-import { requireSessionUser } from "@/lib/auth";
+import { assertPermission, requireSessionUser } from "@/lib/auth";
 import { brandIdentity } from "@/lib/brand";
+import { getNotificationProviderStatus } from "@/services/notifications";
+import { env } from "@/lib/env";
 import type { AppRole } from "@/lib/rbac";
 import {
   BookingStatus,
@@ -809,6 +811,7 @@ export async function getSettingsData() {
     brand: {
       ...brandIdentity,
     },
+    notification: getNotificationProviderStatus(),
   };
 }
 
@@ -1172,4 +1175,44 @@ export async function getTransactionImportLogsData() {
     orderBy: { importedAt: "desc" },
     take: 100,
   });
+}
+
+export async function getMonitoringData() {
+  await requireSessionUser();
+  await assertPermission("admin", "read");
+  const [jobFailures, importFailures, notificationFailures, dbPing, lastJobRun] =
+    await Promise.all([
+      prisma.automationJob.findMany({
+        where: { status: "FAILED" },
+        orderBy: { updatedAt: "desc" },
+        take: 10,
+      }),
+      prisma.transactionImportLog.findMany({
+        where: { failedRows: { gt: 0 } },
+        orderBy: { importedAt: "desc" },
+        take: 10,
+      }),
+      prisma.notificationLog.findMany({
+        where: { status: "FAILED" },
+        orderBy: { failedAt: "desc" },
+        take: 10,
+      }),
+      prisma.$queryRaw`SELECT 1`,
+      prisma.automationJob.findFirst({
+        where: { processedAt: { not: null } },
+        orderBy: { processedAt: "desc" },
+        select: { processedAt: true },
+      }),
+    ]);
+
+  return {
+    systemHealth: "ok",
+    databaseStatus: Array.isArray(dbPing) ? "connected" : "connected",
+    schedulerStatus: env.JOB_RUNNER_MODE === "database" ? "active" : "memory_mode",
+    notificationProvider: getNotificationProviderStatus().selectedProvider,
+    lastJobRunAt: lastJobRun?.processedAt ?? null,
+    jobFailures,
+    importFailures,
+    notificationFailures,
+  };
 }

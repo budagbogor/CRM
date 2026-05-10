@@ -7,10 +7,18 @@ export type NotificationPayload = {
 
 export type NotificationTemplatePayload = {
   to: string;
-  templateKey: string;
+  templateKey: NotificationTemplateKey;
   variables?: Record<string, string | number>;
   metadata?: Record<string, unknown>;
 };
+
+export type NotificationTemplateKey =
+  | "thank_you_visit"
+  | "h_plus_3_follow_up"
+  | "complaint_recovery"
+  | "next_service_reminder"
+  | "booking_confirmation"
+  | "overdue_service";
 
 export type NotificationResult = {
   providerMessageId: string;
@@ -38,4 +46,3 @@ export type DeliveryLogInput = {
   status: "QUEUED" | "SENT" | "FAILED";
   failureReason?: string;
 };
-

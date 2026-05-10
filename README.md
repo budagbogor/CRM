@@ -114,6 +114,7 @@ npm run prisma:generate
 npm run prisma:migrate
 npm run prisma:studio
 npm run db:seed
+npm run jobs:process
 npm run lint
 npm run build
 npx prisma validate
@@ -225,11 +226,12 @@ docker compose --profile app up --build
 Fondasi integrasi production yang sudah disiapkan:
 
 1. `src/lib/env.ts` + `.env.example` untuk validasi env wajib dan mode `dev/demo/production`.
-2. `src/services/notifications` berisi abstraction provider WhatsApp/Email/SMS dengan mock provider:
+2. `src/services/notifications` berisi abstraction provider WhatsApp/Email/SMS dengan provider switch:
    - `sendMessage()`
    - `sendTemplate()`
    - delivery status logging ke `NotificationLog`
    - error handling + structured logging
+   - provider mode: `mock`, `whatsapp_cloud_api`, `smtp`, `resend`
 3. `src/services/jobs` berisi fondasi background jobs untuk:
    - scheduled follow-up
    - service reminder
@@ -267,6 +269,76 @@ Retention trigger setelah import transaksi sukses (status completed):
 - calculate next-service reminder flow (via retention service)
 - update customer health score
 
+## Background Job Scheduler (DB-backed)
+
+Mobeng CRM menggunakan scheduler berbasis database (`AutomationJob`) untuk job asinkron:
+
+- `SEND_THANK_YOU`
+- `SEND_FOLLOW_UP_H3`
+- `SEND_SERVICE_REMINDER`
+- `SEND_OVERDUE_REMINDER`
+- `CHECK_COMPLAINT_SLA`
+- `RECALCULATE_HEALTH_SCORE`
+
+Cara kerja:
+
+1. Flow retention membuat row job ke tabel `AutomationJob`.
+2. Runner membaca job yang sudah jatuh tempo (`scheduledAt`/`nextRunAt`).
+3. Runner lock job dengan `lockedAt` untuk mencegah eksekusi ganda.
+4. Job sukses ditandai `COMPLETED`; gagal di-retry sampai `maxAttempts`.
+
+Run lokal:
+
+```bash
+npm run jobs:process
+```
+
+Cron endpoint production:
+
+```text
+POST /api/cron/process-jobs
+Header: x-cron-secret: <CRON_SECRET>
+```
+
+Untuk Vercel Cron atau external cron worker, panggil endpoint di atas secara berkala (contoh tiap 1-5 menit).
+
+## Logging & Monitoring Setup
+
+Mobeng CRM memakai structured logging JSON dengan level:
+
+- `debug`
+- `info`
+- `warn`
+- `error`
+
+Konfigurasi:
+
+- `LOG_LEVEL`
+- `ERROR_TRACKING_PROVIDER` (`console`, `sentry`, `logtail`, `datadog`)
+- `SENTRY_DSN` (jika provider `sentry`)
+
+Halaman monitoring admin:
+
+- `/admin/monitoring`
+- Menampilkan:
+  - recent job failures
+  - recent import failures
+  - recent notification failures
+  - system/database/scheduler status
+  - last job run time
+
+Health endpoint:
+
+- `GET /api/health`
+- Return app status, database status, scheduler status, notification provider status, environment, version, timestamp.
+
+Recommended production monitoring tools:
+
+1. Error tracking: Sentry
+2. Log aggregation: Datadog atau Logtail
+3. Uptime/health checks: external monitor ke `/api/health`
+4. Alerting: failed job spike, import failure ratio, notification failure ratio
+
 ## Production Deployment (Vercel)
 
 Konfigurasi deployment production sudah disiapkan:
@@ -301,13 +373,25 @@ Variabel minimum production:
 - `APP_ENV` (`production`)
 - `APP_NAME`
 - `APP_VERSION`
+- `LOG_LEVEL`
+- `ERROR_TRACKING_PROVIDER`
+- `SENTRY_DSN`
 - `AUTH_SECRET`
 - `INTEGRATION_API_KEY`
 - `DATABASE_URL`
 - `DIRECT_URL`
-- `NOTIFICATION_PROVIDER_WHATSAPP`
-- `NOTIFICATION_PROVIDER_EMAIL`
-- `NOTIFICATION_PROVIDER_SMS`
+- `NOTIFICATION_PROVIDER`
+- `EMAIL_PROVIDER`
+- `WHATSAPP_ACCESS_TOKEN`
+- `WHATSAPP_PHONE_NUMBER_ID`
+- `WHATSAPP_BUSINESS_ACCOUNT_ID`
+- `WHATSAPP_API_VERSION`
+- `SMTP_HOST`
+- `SMTP_PORT`
+- `SMTP_USER`
+- `SMTP_PASS`
+- `RESEND_API_KEY`
+- `EMAIL_FROM`
 - `DEFAULT_NOTIFICATION_FROM_EMAIL`
 - `DEFAULT_NOTIFICATION_FROM_NAME`
 - `JOB_RUNNER_MODE`
@@ -316,6 +400,7 @@ Variabel minimum production:
 - `UPLOAD_MAX_MB`
 - `RATE_LIMIT_MAX_REQUESTS`
 - `RATE_LIMIT_WINDOW_MS`
+- `CRON_SECRET`
 - `ALLOW_DEMO_SEED` (`false` in production)
 
 ## Migration & Seed Notes

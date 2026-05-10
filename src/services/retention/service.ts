@@ -1,13 +1,10 @@
 import { prisma } from "@/lib/prisma";
 import {
   AutomationJobStatus,
-  AutomationTrigger,
   ComplaintPriority,
   ComplaintStatus,
   CustomerStatus,
   JourneyEventType,
-  NotificationChannel,
-  NotificationStatus,
   RecoveryStatus,
   ReminderStatus,
   ReminderType,
@@ -21,6 +18,7 @@ import {
   buildPostServiceFollowUpMessage,
   buildThankYouVisitMessage,
 } from "@/lib/brand";
+import { enqueueJob } from "@/services/jobs";
 import { assertFound, assertValid } from "./errors";
 import {
   addDays,
@@ -130,11 +128,14 @@ export async function createPostTransactionRetentionFlow(
       vehicleLabel,
       branchName: transaction.branch.name,
     });
-    const automationName = `Follow-up H+3 ${transaction.serviceNumber}`;
     const existingAutomationJob = await tx.automationJob.findFirst({
       where: {
-        jobType: "h_plus_3_post_service_follow_up",
-        name: automationName,
+        jobType: "SEND_FOLLOW_UP_H3",
+        status: AutomationJobStatus.ACTIVE,
+        payload: {
+          path: ["serviceTransactionId"],
+          equals: transaction.id,
+        },
       },
     });
 
@@ -156,36 +157,6 @@ export async function createPostTransactionRetentionFlow(
         description: `Workflow retention Mobeng dimulai untuk ${transaction.serviceNumber}.`,
         source: "retention_service",
         createdById: transaction.advisorId,
-      },
-    });
-
-    const notification = await tx.notificationLog.create({
-      data: {
-        customerId: transaction.customerId,
-        userId: transaction.advisorId,
-        channel: NotificationChannel.WHATSAPP,
-        status: NotificationStatus.QUEUED,
-        recipient: transaction.customer.phone,
-        subject: thankYouMessage.subject,
-        message: thankYouMessage.message,
-        metadata: { serviceTransactionId: transaction.id },
-      },
-    });
-
-    const automationJob = await tx.automationJob.create({
-      data: {
-        name: automationName,
-        jobType: "h_plus_3_post_service_follow_up",
-        status: AutomationJobStatus.ACTIVE,
-        trigger: AutomationTrigger.SCHEDULED,
-        triggerConfig: {
-          serviceTransactionId: transaction.id,
-          customerId: transaction.customerId,
-          vehicleId: transaction.vehicleId,
-          channel: "WHATSAPP",
-        },
-        ownerId: transaction.advisorId,
-        nextRunAt: followUpAt,
       },
     });
 
@@ -212,12 +183,91 @@ export async function createPostTransactionRetentionFlow(
         eventAt: now,
         title: "Reminder follow-up H+3 dibuat",
         source: "retention_service",
-        metadata: { reminderId: reminder.id, automationJobId: automationJob.id },
+        metadata: { reminderId: reminder.id },
         createdById: transaction.advisorId,
       },
     });
 
-    return { journeyEvent, notification, automationJob, reminder };
+    await enqueueJob({
+      type: "SEND_THANK_YOU",
+      payload: {
+        serviceTransactionId: transaction.id,
+        customerId: transaction.customerId,
+        userId: transaction.advisorId,
+        to: transaction.customer.phone,
+        subject: thankYouMessage.subject,
+        message: thankYouMessage.message,
+      },
+      scheduledAt: now,
+      ownerId: transaction.advisorId,
+      name: `Thank You ${transaction.serviceNumber}`,
+      maxAttempts: 3,
+    });
+
+    const followUpJob = await enqueueJob({
+      type: "SEND_FOLLOW_UP_H3",
+      payload: {
+        serviceTransactionId: transaction.id,
+        customerId: transaction.customerId,
+        vehicleId: transaction.vehicleId,
+        userId: transaction.advisorId,
+        to: transaction.customer.phone,
+        subject: followUpMessage.subject,
+        message: followUpMessage.message,
+      },
+      scheduledAt: followUpAt,
+      ownerId: transaction.advisorId,
+      name: `H+3 ${transaction.serviceNumber}`,
+      maxAttempts: 3,
+    });
+
+    const dueDate = transaction.vehicle.nextServiceDueDate ?? addDays(now, 180);
+    await enqueueJob({
+      type: "SEND_SERVICE_REMINDER",
+      payload: {
+        serviceTransactionId: transaction.id,
+        customerId: transaction.customerId,
+        vehicleId: transaction.vehicleId,
+        userId: transaction.advisorId,
+        to: transaction.customer.phone,
+        subject: "Pengingat Servis Berikutnya",
+        message: `Mobil ${vehicleLabel} diperkirakan perlu servis berikutnya pada ${dueDate.toISOString()}.`,
+      },
+      scheduledAt: dueDate,
+      ownerId: transaction.advisorId,
+      name: `Service Reminder ${transaction.serviceNumber}`,
+      maxAttempts: 3,
+    });
+
+    await enqueueJob({
+      type: "SEND_OVERDUE_REMINDER",
+      payload: {
+        serviceTransactionId: transaction.id,
+        customerId: transaction.customerId,
+        vehicleId: transaction.vehicleId,
+        userId: transaction.advisorId,
+        to: transaction.customer.phone,
+        subject: "Servis Overdue",
+        message: `Servis ${vehicleLabel} sudah melewati jadwal, silakan booking ke ${transaction.branch.name}.`,
+      },
+      scheduledAt: addDays(dueDate, 1),
+      ownerId: transaction.advisorId,
+      name: `Overdue Reminder ${transaction.serviceNumber}`,
+      maxAttempts: 3,
+    });
+
+    await enqueueJob({
+      type: "RECALCULATE_HEALTH_SCORE",
+      payload: {
+        customerId: transaction.customerId,
+      },
+      scheduledAt: now,
+      ownerId: transaction.advisorId,
+      name: `Recalculate Health ${transaction.customerId}`,
+      maxAttempts: 3,
+    });
+
+    return { journeyEvent, followUpJob, reminder };
   });
 }
 
@@ -507,6 +557,18 @@ export async function createComplaintRecoveryFlow(
         },
         createdById: ownerId,
       },
+    });
+
+    await enqueueJob({
+      type: "CHECK_COMPLAINT_SLA",
+      payload: {
+        ticketId: ticket.id,
+        customerId: ticket.customerId,
+      },
+      scheduledAt: promisedAt,
+      ownerId,
+      name: `Complaint SLA ${ticket.ticketNumber}`,
+      maxAttempts: 5,
     });
 
     return {

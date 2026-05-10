@@ -1,3 +1,6 @@
+import { env } from "@/lib/env";
+import { getErrorTrackingProvider } from "@/services/error-tracking";
+
 export type LogLevel = "debug" | "info" | "warn" | "error";
 
 type LogEntry = {
@@ -7,14 +10,33 @@ type LogEntry = {
   timestamp: string;
 };
 
+const levelOrder: Record<LogLevel, number> = {
+  debug: 10,
+  info: 20,
+  warn: 30,
+  error: 40,
+};
+
 function write(entry: LogEntry) {
+  if (levelOrder[entry.level] < levelOrder[env.LOG_LEVEL]) return;
+
   const serialized = JSON.stringify(entry);
   if (entry.level === "error") {
     console.error(serialized);
+    getErrorTrackingProvider().capture({
+      message: entry.message,
+      level: "error",
+      context: entry.context,
+    });
     return;
   }
   if (entry.level === "warn") {
     console.warn(serialized);
+    getErrorTrackingProvider().capture({
+      message: entry.message,
+      level: "warn",
+      context: entry.context,
+    });
     return;
   }
   console.log(serialized);

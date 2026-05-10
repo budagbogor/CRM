@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import {
   BarChart3,
   Bell,
+  Activity,
   CalendarClock,
   Car,
   ClipboardCheck,
@@ -38,6 +39,7 @@ const navigation = [
   { name: "Reminder", href: "/reminders", icon: Bell },
   { name: "Bookings", href: "/bookings", icon: CalendarClock },
   { name: "Integrasi", href: "/integrations/transactions", icon: Database },
+  { name: "Monitoring", href: "/admin/monitoring", icon: Activity },
   { name: "Laporan", href: "/reports", icon: BarChart3 },
   { name: "Pengaturan", href: "/settings", icon: Settings },
 ];

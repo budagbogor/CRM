@@ -642,6 +642,13 @@ model AutomationJob {
   jobType          String
   status           AutomationJobStatus @default(ACTIVE)
   trigger          AutomationTrigger
+  payload          Json?
+  scheduledAt      DateTime?
+  attempts         Int                 @default(0)
+  maxAttempts      Int                 @default(3)
+  lastError        String?             @db.Text
+  lockedAt         DateTime?
+  processedAt      DateTime?
   triggerConfig    Json?
   blueprintStageId String?
   ownerId          String?
@@ -660,6 +667,8 @@ model AutomationJob {
   @@index([ownerId])
   @@index([status])
   @@index([nextRunAt])
+  @@index([scheduledAt])
+  @@index([lockedAt])
 }
 
 model NotificationLog {
