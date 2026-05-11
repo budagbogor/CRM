@@ -20,14 +20,14 @@
     "@prisma/adapter-pg": "^7.8.0",
     "@prisma/client": "^7.8.0",
     "lucide-react": "^1.14.0",
-    "next": "16.2.4",
+    "next": "^16.2.6",
     "pg": "^8.20.0",
     "react": "19.2.4",
     "react-dom": "19.2.4",
     "react-hook-form": "^7.75.0",
     "recharts": "^3.8.1",
     "sonner": "^2.0.7",
-    "xlsx": "^0.18.5",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
     "zod": "^4.4.3"
   },
   "devDependencies": {
@@ -43,5 +43,9 @@
     "tsx": "^4.21.0",
     "typescript": "^5",
     "vitest": "^4.1.5"
+  },
+  "overrides": {
+    "postcss": "^8.5.10",
+    "@hono/node-server": "^1.19.13"
   }
 }

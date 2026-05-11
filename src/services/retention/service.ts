@@ -22,6 +22,7 @@ import { enqueueJob } from "@/services/jobs";
 import { assertFound, assertValid } from "./errors";
 import {
   addDays,
+  subDays,
   calculateHealthScoreFromRules,
   calculateNextServiceProjection,
   daysBetween,
@@ -222,6 +223,96 @@ export async function createPostTransactionRetentionFlow(
     });
 
     const dueDate = transaction.vehicle.nextServiceDueDate ?? addDays(now, 180);
+
+    // Cadence H-30
+    const h30Date = subDays(dueDate, 30);
+    if (h30Date > now) {
+      await enqueueJob({
+        type: "SEND_SERVICE_REMINDER",
+        payload: {
+          serviceTransactionId: transaction.id,
+          customerId: transaction.customerId,
+          vehicleId: transaction.vehicleId,
+          userId: transaction.advisorId,
+          to: transaction.customer.phone,
+          subject: "Persiapan Servis 1 Bulan Lagi",
+          message: `Halo ${transaction.customer.firstName}, ${vehicleLabel} akan memasuki jadwal servis dalam 30 hari lagi. Silakan booking jadwal Anda di Mobeng.`,
+          cadenceLabel: "H-30",
+        },
+        scheduledAt: h30Date,
+        ownerId: transaction.advisorId,
+        name: `Service Reminder H-30 ${transaction.serviceNumber}`,
+        maxAttempts: 3,
+      });
+    }
+
+    // Cadence H-14
+    const h14Date = subDays(dueDate, 14);
+    if (h14Date > now) {
+      await enqueueJob({
+        type: "SEND_SERVICE_REMINDER",
+        payload: {
+          serviceTransactionId: transaction.id,
+          customerId: transaction.customerId,
+          vehicleId: transaction.vehicleId,
+          userId: transaction.advisorId,
+          to: transaction.customer.phone,
+          subject: "Persiapan Servis 2 Minggu Lagi",
+          message: `Halo ${transaction.customer.firstName}, mengingatkan kembali bahwa ${vehicleLabel} dijadwalkan servis dalam 14 hari ke depan.`,
+          cadenceLabel: "H-14",
+        },
+        scheduledAt: h14Date,
+        ownerId: transaction.advisorId,
+        name: `Service Reminder H-14 ${transaction.serviceNumber}`,
+        maxAttempts: 3,
+      });
+    }
+
+    // Cadence H-7
+    const h7Date = subDays(dueDate, 7);
+    if (h7Date > now) {
+      await enqueueJob({
+        type: "SEND_SERVICE_REMINDER",
+        payload: {
+          serviceTransactionId: transaction.id,
+          customerId: transaction.customerId,
+          vehicleId: transaction.vehicleId,
+          userId: transaction.advisorId,
+          to: transaction.customer.phone,
+          subject: "Persiapan Servis 1 Minggu Lagi",
+          message: `Halo ${transaction.customer.firstName}, ${vehicleLabel} dijadwalkan servis dalam 7 hari lagi. Jangan lupa booking jadwal Anda di Mobeng.`,
+          cadenceLabel: "H-7",
+        },
+        scheduledAt: h7Date,
+        ownerId: transaction.advisorId,
+        name: `Service Reminder H-7 ${transaction.serviceNumber}`,
+        maxAttempts: 3,
+      });
+    }
+
+    // Cadence H-1
+    const h1Date = subDays(dueDate, 1);
+    if (h1Date > now) {
+      await enqueueJob({
+        type: "SEND_SERVICE_REMINDER",
+        payload: {
+          serviceTransactionId: transaction.id,
+          customerId: transaction.customerId,
+          vehicleId: transaction.vehicleId,
+          userId: transaction.advisorId,
+          to: transaction.customer.phone,
+          subject: "Besok Jadwal Servis Anda",
+          message: `Halo ${transaction.customer.firstName}, besok adalah jadwal ideal untuk servis ${vehicleLabel} di Mobeng. Kami tunggu kedatangannya.`,
+          cadenceLabel: "H-1",
+        },
+        scheduledAt: h1Date,
+        ownerId: transaction.advisorId,
+        name: `Service Reminder H-1 ${transaction.serviceNumber}`,
+        maxAttempts: 3,
+      });
+    }
+
+    // Exact Due Date (H-0)
     await enqueueJob({
       type: "SEND_SERVICE_REMINDER",
       payload: {
@@ -230,15 +321,17 @@ export async function createPostTransactionRetentionFlow(
         vehicleId: transaction.vehicleId,
         userId: transaction.advisorId,
         to: transaction.customer.phone,
-        subject: "Pengingat Servis Berikutnya",
-        message: `Mobil ${vehicleLabel} diperkirakan perlu servis berikutnya pada ${dueDate.toISOString()}.`,
+        subject: "Waktunya Servis Berkala",
+        message: `Hari ini adalah jadwal servis ${vehicleLabel}. Pastikan performa tetap optimal dengan servis di Mobeng.`,
+        cadenceLabel: "H-0",
       },
       scheduledAt: dueDate,
       ownerId: transaction.advisorId,
-      name: `Service Reminder ${transaction.serviceNumber}`,
+      name: `Service Reminder H-0 ${transaction.serviceNumber}`,
       maxAttempts: 3,
     });
 
+    // Overdue H+7
     await enqueueJob({
       type: "SEND_OVERDUE_REMINDER",
       payload: {
@@ -247,12 +340,13 @@ export async function createPostTransactionRetentionFlow(
         vehicleId: transaction.vehicleId,
         userId: transaction.advisorId,
         to: transaction.customer.phone,
-        subject: "Servis Overdue",
-        message: `Servis ${vehicleLabel} sudah melewati jadwal, silakan booking ke ${transaction.branch.name}.`,
+        subject: "Jadwal Servis Terlewati",
+        message: `Servis ${vehicleLabel} sudah melewati jadwal lebih dari seminggu. Segera hubungi Mobeng untuk menjaga garansi dan performa.`,
+        cadenceLabel: "H+7",
       },
-      scheduledAt: addDays(dueDate, 1),
+      scheduledAt: addDays(dueDate, 7),
       ownerId: transaction.advisorId,
-      name: `Overdue Reminder ${transaction.serviceNumber}`,
+      name: `Overdue Reminder H+7 ${transaction.serviceNumber}`,
       maxAttempts: 3,
     });
 

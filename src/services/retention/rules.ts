@@ -15,6 +15,12 @@ export function addDays(date: Date, days: number) {
   return next;
 }
 
+export function subDays(date: Date, days: number) {
+  const prev = new Date(date);
+  prev.setDate(prev.getDate() - days);
+  return prev;
+}
+
 export function addMonths(date: Date, months: number) {
   const next = new Date(date);
   next.setMonth(next.getMonth() + months);

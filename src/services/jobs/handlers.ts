@@ -53,7 +53,11 @@ export const sendServiceReminderHandler: JobHandler = async (payload) => {
     subject: asString(payload.subject) || "Pengingat Servis Mobeng",
     customerId: asString(payload.customerId) || undefined,
     userId: asString(payload.userId) || undefined,
-    metadata: { source: "job_runner", jobType: "SEND_SERVICE_REMINDER" },
+    metadata: {
+      source: "job_runner",
+      jobType: "SEND_SERVICE_REMINDER",
+      cadence: asString(payload.cadenceLabel) || undefined,
+    },
   });
 };
 
@@ -67,7 +71,11 @@ export const sendOverdueReminderHandler: JobHandler = async (payload) => {
     subject: asString(payload.subject) || "Servis Overdue Mobeng",
     customerId: asString(payload.customerId) || undefined,
     userId: asString(payload.userId) || undefined,
-    metadata: { source: "job_runner", jobType: "SEND_OVERDUE_REMINDER" },
+    metadata: {
+      source: "job_runner",
+      jobType: "SEND_OVERDUE_REMINDER",
+      cadence: asString(payload.cadenceLabel) || undefined,
+    },
   });
 };
 
