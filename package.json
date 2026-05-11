@@ -13,6 +13,7 @@
     "prisma:studio": "prisma studio",
     "db:seed": "tsx prisma/seed.ts",
     "jobs:process": "tsx scripts/process-jobs.ts",
+    "gen:template": "tsx scripts/generate-import-template.ts",
     "test": "vitest run"
   },
   "dependencies": {

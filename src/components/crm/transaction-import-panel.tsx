@@ -85,13 +85,14 @@ export function TransactionImportPanel() {
             type="file"
             accept=".csv,.xlsx"
             onChange={(event) => onFileChange(event.target.files?.[0] ?? null)}
-            className="block w-full max-w-md text-sm"
+            className="block w-full max-w-md cursor-pointer text-sm file:cursor-pointer"
           />
           <a
-            href="/templates/mobeng-transaction-import-template.csv"
+            href="/templates/mobeng-transaction-import-template.xlsx"
+            download
             className="text-sm font-medium text-sky-600 hover:underline dark:text-sky-400"
           >
-            Download template CSV
+            Download Template Excel
           </a>
         </div>
         {fileName ? <p className="mt-2 text-xs text-zinc-500">File: {fileName}</p> : null}
