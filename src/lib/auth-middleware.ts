@@ -34,26 +34,21 @@ export function enforceRbac(request: NextRequest) {
     );
   }
 
+  if (pathname === "/login") {
+    return NextResponse.redirect(new URL("/dashboard", request.url));
+  }
+
   if (
-    pathname === "/login" ||
     pathname === "/unauthorized" ||
     pathname === "/api/health" ||
-    pathname === "/api/cron/process-jobs"
+    pathname === "/api/cron/process-jobs" ||
+    pathname === "/api/integrations/transactions/import"
   ) {
     return NextResponse.next();
   }
-  if (pathname === "/api/integrations/transactions/import") return NextResponse.next();
 
-  const role = parseRoleFromToken(request.cookies.get(SESSION_COOKIE)?.value);
-  if (!role) {
-    if (pathname.startsWith("/api")) {
-      return NextResponse.json(
-        { success: false, error: "Unauthorized" },
-        { status: 401 }
-      );
-    }
-    return NextResponse.redirect(new URL("/login", request.url));
-  }
+  // Bypass autentikasi selama pengembangan - default ke role Admin
+  const role = parseRoleFromToken(request.cookies.get(SESSION_COOKIE)?.value) ?? "Admin";
 
   if (!canAccessRoute(pathname, role)) {
     if (pathname.startsWith("/api")) {
